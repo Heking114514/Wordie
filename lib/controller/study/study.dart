@@ -288,14 +288,8 @@ void reloadStudy() {
 //   }
 
   void reviewTodayAgain() async {
-    var studyQueueMaxCount = appService.queueCount;
-    playingWords = studyService.resetReviewBatch(studyQueueMaxCount);
-    playingIndex = 0;
-    if (playingWords.isEmpty) {
-      Get.offAllNamed("/main");
-      return;
-    }
-    await startPlay();
+    GetStorage().remove('review_date_${appService.bookId}');
+    _init();
   }
 
   Future<void> fetchCount() async {
@@ -305,12 +299,17 @@ void reloadStudy() {
     bookLearnedCount.value = await wordDao.queryProgressWordCount(appService.bookId) ?? 0;
     bookTotalCount.value = await wordDao.queryWordCount(appService.bookId) ?? 0;
 
-    var rCount = await wordDao.queryAdapter.query(
-      'select count(distinct word.word) as count from word_status status left join word word on word.word = status.word where status.status=1 and word.book=?1',
-      mapper: (Map<String, Object?> row) => (row['count'] as int?) ?? 0,
-      arguments:[appService.bookId]
-    );
-    reviewCount.value = rCount ?? 0;
+    if (Get.parameters['mode'] == 'review') {
+      sessionPassCount.value = GetStorage().read('review_passed_${appService.bookId}') ?? 0;
+      reviewCount.value = GetStorage().read('review_target_${appService.bookId}') ?? 0;
+    } else {
+      var rCount = await wordDao.queryAdapter.query(
+        'select count(distinct word.word) as count from word_status status left join word word on word.word = status.word where status.status=1 and word.book=?1',
+        mapper: (Map<String, Object?> row) => (row['count'] as int?) ?? 0,
+        arguments:[appService.bookId]
+      );
+      reviewCount.value = rCount ?? 0;
+    }
 
     var time = (await wordDao.queryStudyTime()) ?? 0;
     var use = (time / 1000 / 60).toStringAsFixed(1);

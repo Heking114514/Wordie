@@ -237,6 +237,8 @@ Widget _buildOptionTile(String title, String value) {
   }
 
   Widget buildWordView(BuildContext context) {
+    bool isDark = Theme.of(context).brightness == Brightness.dark;
+
     return Stack(
       children: [
         Container(
@@ -258,7 +260,7 @@ Widget _buildOptionTile(String title, String value) {
             child: buildWordContent(context),
           ),
         if (!controller.autoRotating) buildWordContent(context),
-        //PASS 按钮
+
         if (controller.autoPass.value == false)
           Align(
             alignment: Alignment.bottomCenter,
@@ -277,7 +279,7 @@ Widget _buildOptionTile(String title, String value) {
                       BoxShadow(
                         blurStyle: BlurStyle.outer,
                         blurRadius: 10,
-                        color: Colors.green.withOpacity(0.2),
+                        color: isDark ? Colors.green.withOpacity(0.5) : Colors.green.withOpacity(0.2),
                       )
                     ],
                   ),
@@ -294,15 +296,13 @@ Widget _buildOptionTile(String title, String value) {
                           children: [
                             Icon(
                               Icons.check,
-                              color: controller.thinking.value == false
-                                  ? Colors.black12
-                                  : Colors.black12,
+                              color: isDark ? Colors.white54 : Colors.black12,
                               size: 50,
                             ),
                             Text(
                               "PASS",
                               style: TextStyle(
-                                color: Colors.black12,
+                                color: isDark ? Colors.white54 : Colors.black12,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 14,
                               ),
@@ -314,7 +314,7 @@ Widget _buildOptionTile(String title, String value) {
               );
             }),
           ),
-        //Delete 按钮
+
         if (controller.autoRotating == false)
           Align(
             alignment: Alignment.topRight,
@@ -326,13 +326,13 @@ Widget _buildOptionTile(String title, String value) {
                 height: 36,
                 child: Ink(
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: isDark ? const Color(0xFF1E293B) : Colors.white,
                     borderRadius: BorderRadius.circular(100),
                     boxShadow: [
                       BoxShadow(
                         blurStyle: BlurStyle.outer,
                         blurRadius: 10,
-                        color: Colors.green.withOpacity(0.2),
+                        color: isDark ? Colors.red.withOpacity(0.4) : Colors.red.withOpacity(0.2),
                       )
                     ],
                   ),
@@ -341,7 +341,6 @@ Widget _buildOptionTile(String title, String value) {
                       onTap: controller.controlEnable.value &&
                               controller.thinking.value == false
                           ? () {
-                              //删除单词
                               controller.delete();
                             }
                           : null,
@@ -349,9 +348,7 @@ Widget _buildOptionTile(String title, String value) {
                         alignment: Alignment.center,
                         child: Icon(
                           Icons.delete_outline_rounded,
-                          color: controller.thinking.value == false
-                              ? Colors.red
-                              : Colors.red,
+                          color: Colors.red,
                           size: 24,
                         ),
                       )),
@@ -360,7 +357,6 @@ Widget _buildOptionTile(String title, String value) {
             }),
           ),
 
-        //PASS 数据
         Align(
           alignment: Alignment.bottomLeft,
           child: Container(
@@ -369,39 +365,27 @@ Widget _buildOptionTile(String title, String value) {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  Get.parameters['mode'] == 'review' ? "已复习: " : "已学习: ",
-                  style: TextStyle(
-                    color: Colors.grey.withOpacity(0.8),
-                    fontSize: 12,
-                  ),
+                  Get.parameters['mode'] == 'review' ? "今日已复习: " : "已学习: ",
+                  style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
                 ),
                 Obx(() {
                   return Text(
                     Get.parameters['mode'] == 'review'
                         ? "${controller.sessionPassCount.value}"
                         : "${controller.bookLearnedCount.value}",
-                    style: TextStyle(
-                      color: Colors.green.withOpacity(0.8),
-                      fontSize: 12,
-                    ),
+                    style: TextStyle(color: isDark ? Colors.greenAccent.withOpacity(0.8) : Colors.green.withOpacity(0.8), fontSize: 12),
                   );
                 }),
                 Text(
-                  Get.parameters['mode'] == 'review' ? "    该书待复习: " : "    本书词汇: ",
-                  style: TextStyle(
-                    color: Colors.grey.withOpacity(0.8),
-                    fontSize: 12,
-                  ),
+                  Get.parameters['mode'] == 'review' ? "    今日复习目标: " : "    本书词汇: ",
+                  style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
                 ),
                 Obx(() {
                   return Text(
                     Get.parameters['mode'] == 'review'
                         ? "${controller.reviewCount.value}"
                         : "${controller.bookTotalCount.value}",
-                    style: TextStyle(
-                      color: Colors.redAccent.withOpacity(0.8),
-                      fontSize: 12,
-                    ),
+                    style: TextStyle(color: isDark ? Colors.redAccent.shade100 : Colors.redAccent.withOpacity(0.8), fontSize: 12),
                   );
                 }),
               ],
@@ -409,7 +393,6 @@ Widget _buildOptionTile(String title, String value) {
           ),
         ),
 
-        //时长数据
         Align(
           alignment: Alignment.bottomRight,
           child: Container(
@@ -419,18 +402,12 @@ Widget _buildOptionTile(String title, String value) {
               children: [
                 Text(
                   "时长: ",
-                  style: TextStyle(
-                    color: Colors.grey.withOpacity(0.8),
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
                 ),
                 Obx(() {
                   return Text(
                     "${controller.studyTime.value}",
-                    style: TextStyle(
-                      color: Colors.grey.withOpacity(0.8),
-                      fontSize: 12,
-                    ),
+                    style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
                   );
                 }),
               ],

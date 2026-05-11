@@ -270,6 +270,10 @@ class ProfileController extends GetxController {
         'title': 'Wordie 学习提醒',
         'description': '坚持，自见曙光！快来完成今天的单词任务吧。',
         'time': reminderTime.value,
+        'days': 3650,
+        'count': 3650,
+        'repeat': true,
+        'rrule': 'FREQ=DAILY',
       });
       if (eventId != null) {
         storage.write('calendar_event_id', eventId);
