@@ -170,9 +170,9 @@ class ProfileController extends GetxController {
                 Text("关于作者", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: text)),
                 const SizedBox(height: 20),
                 _buildInfoRow(Icons.person_rounded, "Heking", primary, text, muted),
-                _buildInfoRow(Icons.wechat, "heking123", primary, text, muted),
-                _buildInfoRow(Icons.alternate_email, "heking@example.com", primary, text, muted),
-                _buildInfoRow(Icons.chat, "1145141919", primary, text, muted),
+                _buildInfoRow(Icons.wechat, "he-55782", primary, text, muted),
+                _buildInfoRow(Icons.alternate_email, "3395695038@qq.com", primary, text, muted),
+                _buildInfoRow(Icons.chat, "3395695038", primary, text, muted),
                 const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,

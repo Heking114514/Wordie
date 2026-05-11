@@ -169,7 +169,7 @@ class ProfilePage extends GetView<ProfileController> {
                 title: "开源仓库 (GitHub)",
                 trailing: Icon(Icons.open_in_new_rounded, size: 16, color: textMuted),
                 onTap: () async {
-                  const url = 'https://github.com/Heking114514';
+                  const url = 'https://github.com/Heking114514/Wordie';
                   if (!await launch(url)) {
                     Get.snackbar("错误", "无法打开链接");
                   }
