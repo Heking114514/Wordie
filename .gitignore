@@ -4,6 +4,7 @@ build/
 .flutter-plugins
 .flutter-plugins-dependencies
 .packages
+.claude
 
 # --- Floor (ORM) Generated Code ---
 **/floor.g.dart
