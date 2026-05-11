@@ -1,0 +1,48 @@
+# --- Build & Generated ---
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+
+# --- Floor (ORM) Generated Code ---
+**/floor.g.dart
+
+# --- IDE ---
+.idea/
+*.iml
+.vscode/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Android ---
+android/.gradle/
+android/app/debug/
+android/app/profile/
+android/app/release/
+android/key.properties
+*.jks
+*.keystore
+
+# --- iOS ---
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+ios/Flutter/.last_build_id
+
+# --- macOS / Linux / Windows build ---
+macos/Pods/
+linux/flutter/
+windows/flutter/
+
+# --- FVM ---
+.fvm/
+
+# --- Logs & Dumps ---
+*.log
+*.pyc
+*.swp
+*.stackdump
