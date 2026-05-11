@@ -11,16 +11,6 @@ import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:sqflite/sqflite.dart';
 import 'dao/floor.dart';
-import 'package:english/view/splash/splash_page.dart';
-import 'package:english/view/main/main_page.dart';
-import 'package:english/controller/main/main_controller.dart';
-import 'package:english/controller/home/home_v2.dart';
-import 'package:english/controller/explore/explore.dart';
-import 'package:english/controller/statistic/statistic.dart';
-import 'package:english/service/home/home.dart';
-
-bool isAppReady = false;
-Future<void>? initFuture;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,12 +21,6 @@ void main() async {
 
   await GetStorage.init();
 
-  initFuture = _initializeApp();
-
-  runApp(const MyApp());
-}
-
-Future<void> _initializeApp() async {
   var databasesPath = await getDatabasesPath();
   String path = "$databasesPath/english.db";
   var dbDir = Directory(databasesPath);
@@ -56,7 +40,7 @@ Future<void> _initializeApp() async {
   Get.put(AppService());
   Get.put(AppController());
 
-  isAppReady = true;
+  runApp(const MyApp());
 }
 
 class NoBounceScrollBehavior extends ScrollBehavior {
@@ -73,26 +57,9 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     bool isDark = GetStorage().read('dark_mode') == true;
 
-    final List<GetPage> modifiedPages = pages.map((page) {
-      if (page.name == '/main') {
-        return GetPage(
-          name: '/main',
-          page: () {
-            Get.lazyPut(() => HomeService());
-            Get.lazyPut(() => MainController());
-            Get.lazyPut(() => HomeControllerV2());
-            Get.lazyPut(() => ExploreController());
-            Get.lazyPut(() => StatisticController());
-            return isAppReady ? const MainPage() : const MainWrapper();
-          },
-        );
-      }
-      return page;
-    }).toList();
-
     return GetMaterialApp(
       debugShowCheckedModeBanner: false,
-      getPages: modifiedPages,
+      getPages: pages,
       scrollBehavior: NoBounceScrollBehavior(),
       themeMode: isDark ? ThemeMode.dark : ThemeMode.light,
       theme: ThemeData(
@@ -117,26 +84,6 @@ class MyApp extends StatelessWidget {
           titleTextStyle: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
         ),
       ),
-    );
-  }
-}
-
-// 兜底等待层：数据释放时显示你的原版动画，释放完毕切入主页
-class MainWrapper extends StatelessWidget {
-  const MainWrapper({Key? key}) : super(key: key);
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder(
-      future: initFuture,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          // 【修复】直接返回你自己的加载页，去掉了那个导致报错的 Scaffold 
-          return const SplashPage();
-        }
-        // 释放完毕，瞬间切入主界面
-        return const MainPage();
-      }
     );
   }
 }
