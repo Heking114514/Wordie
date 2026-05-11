@@ -1,12 +1,15 @@
 // lib/controller/selectBook/selectBook.dart
 import 'dart:io';
+import 'package:english/dicts/reader.dart';
 import 'package:english/service/app/app.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import 'package:english/dao/word/word.dart';
+import '../../util/dictionary.dart';
 import '../../controller/home/home_v2.dart';
+import '../../controller/main/main_controller.dart';
 
 class SelectBookController extends GetxController {
   AppService appService = Get.find();
@@ -73,14 +76,176 @@ class SelectBookController extends GetxController {
             ),
             Divider(color: isDark ? Colors.white24 : Colors.black26),
             ListTile(
+              leading: const Icon(Icons.search, color: Colors.blue),
+              title: Text("搜索本书单词", style: TextStyle(color: isDark ? Colors.white : Colors.black)),
+              onTap: () {
+                Get.back();
+                _showBookSearch(context, bookName, isDark);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.refresh, color: Colors.orange),
               title: const Text("清空本词书进度", style: TextStyle(color: Colors.orange)),
               onTap: () => _confirmClearProgress(bId, progressCount),
             ),
+            Divider(color: isDark ? Colors.white24 : Colors.black26),
             ListTile(
               leading: const Icon(Icons.delete, color: Colors.red),
               title: const Text("彻底删除该词库", style: TextStyle(color: Colors.red)),
               onTap: () => _confirmDeleteBook(bookName, bId, progressCount),
+            ),
+          ],
+        ),
+      ),
+      isScrollControlled: true,
+    );
+  }
+
+  void _showBookSearch(BuildContext context, String bookName, bool isDark) {
+    final words = appService.wordService.bookMap[bookName]?.words ?? [];
+    final searchController = TextEditingController();
+    final results = <Word>[].obs;
+    final searchQuery = ''.obs;
+
+    Get.bottomSheet(
+      Container(
+        height: Get.height * 0.75,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1E293B) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text("搜索《$bookName》", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
+                  ),
+                  IconButton(
+                    icon: Icon(Icons.close, color: isDark ? Colors.white70 : Colors.black54),
+                    onPressed: () => Get.back(),
+                  ),
+                ],
+              ),
+            ),
+            // search bar
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: TextField(
+                controller: searchController,
+                autofocus: true,
+                style: TextStyle(color: isDark ? Colors.white : Colors.black),
+                decoration: InputDecoration(
+                  icon: Icon(Icons.search, color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF94A3B8)),
+                  hintText: "输入英文单词...",
+                  hintStyle: TextStyle(color: isDark ? const Color(0xFF64748B) : const Color(0xFF94A3B8), fontSize: 15),
+                  border: InputBorder.none,
+                ),
+                onChanged: (q) {
+                  final query = q.toLowerCase().trim();
+                  searchQuery.value = query;
+                  if (query.isEmpty) {
+                    results.clear();
+                    return;
+                  }
+                  final matches = words.where((w) =>
+                    w.word != null && w.word!.toLowerCase().contains(query)
+                  ).toList();
+                  matches.sort((a, b) {
+                    final aExact = a.word!.toLowerCase() == query;
+                    final bExact = b.word!.toLowerCase() == query;
+                    if (aExact && !bExact) return -1;
+                    if (!aExact && bExact) return 1;
+                    final aStart = a.word!.toLowerCase().startsWith(query);
+                    final bStart = b.word!.toLowerCase().startsWith(query);
+                    if (aStart && !bStart) return -1;
+                    if (!aStart && bStart) return 1;
+                    return a.word!.toLowerCase().compareTo(b.word!.toLowerCase());
+                  });
+                  results.value = matches.take(30).toList();
+                },
+              ),
+            ),
+            const SizedBox(height: 10),
+            // results
+            Expanded(
+              child: Obx(() {
+                if (searchQuery.value.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.search_off, size: 48, color: isDark ? const Color(0xFF475569) : const Color(0xFFCBD5E1)),
+                        const SizedBox(height: 12),
+                        Text("输入单词进行搜索", style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : Colors.grey, fontSize: 14)),
+                      ],
+                    ),
+                  );
+                }
+                if (results.isEmpty) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 40),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.info_outline, size: 48, color: isDark ? const Color(0xFF475569) : const Color(0xFFCBD5E1)),
+                          const SizedBox(height: 12),
+                          Text("本书没有这个词", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
+                          const SizedBox(height: 8),
+                          Text("可前往搜索界面查询并添加到词书", textAlign: TextAlign.center, style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : Colors.grey, fontSize: 13)),
+                          const SizedBox(height: 20),
+                          ElevatedButton.icon(
+                            icon: const Icon(Icons.search, size: 18),
+                            label: const Text("去搜索界面"),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF407BFF),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                            onPressed: () {
+                              Get.back(); // close search sheet
+                              Get.back(); // back to main
+                              Future.delayed(const Duration(milliseconds: 100), () {
+                                if (Get.isRegistered<MainController>()) {
+                                  Get.find<MainController>().changePage(1);
+                                }
+                              });
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+                return ListView.separated(
+                  physics: const BouncingScrollPhysics(),
+                  padding: const EdgeInsets.only(top: 5, bottom: 30),
+                  itemCount: results.length,
+                  separatorBuilder: (_, __) => Divider(color: isDark ? const Color(0xFF334155) : const Color(0xFFF1F5F9), indent: 20, endIndent: 20),
+                  itemBuilder: (_, index) {
+                    final word = results[index];
+                    final vo = appService.toWordVO(word);
+                    return ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                      title: Text(word.word ?? "", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: isDark ? Colors.white : const Color(0xFF1E293B))),
+                      subtitle: Text(
+                        vo?.means?.join("；") ?? "",
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B), fontSize: 13),
+                      ),
+                    );
+                  },
+                );
+              }),
             ),
           ],
         ),
@@ -203,17 +368,31 @@ class SelectBookController extends GetxController {
     return;
   }
 
-  // 后续逻辑保持不变
   Get.dialog(const Center(child: CircularProgressPath()), barrierDismissible: false);
-  
+
   await appService.wordService.addCustomBook(bookName.trim(), spells);
   await appService.insertCustomBookToDb(bookName.trim());
-  
+
+  int fetched = 0;
+  for (var spell in spells) {
+    if (appService.getWordBySpell(spell) == null) {
+      final word = await fetchWordDefinition(spell);
+      if (word != null) {
+        appService.wordService.wordMap[word.id!] = word;
+        fetched++;
+      }
+    }
+  }
+  if (fetched > 0) {
+    await appService.wordService.loadCustomBooks();
+    await appService.insertCustomBookToDb(bookName.trim());
+  }
+
   refreshBooks();
-  
+
   Get.back(); // 关闭 loading
   Get.back(); // 关闭弹窗
-  Get.snackbar("成功", "《$bookName》已创建，已按字典序排列，共 ${spells.length} 个单词！");
+  Get.snackbar("成功", "《$bookName》已创建，共 ${spells.length} 个单词" + (fetched > 0 ? "（从网络获取 $fetched 个释义）" : ""));
 }
 
   Future<String?> pickTxtFile() async {

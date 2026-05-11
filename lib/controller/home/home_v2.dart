@@ -184,13 +184,12 @@ class HomeControllerV2 extends GetxController {
       return;
     }
 
-    var allCount = await wordDao.queryWordCount(appService.bookId) ?? 1;
+    var allCount = await wordDao.queryWordCount(appService.bookId) ?? 0;
     var progressCount = await wordDao.queryProgressWordCount(appService.bookId) ?? 0;
     var dailyCount = await wordDao.queryDailyPassWordCount();
 
-    // 格式化确保 UI 呈现完美的已学 n / m 词
     progress.value = "$progressCount / $allCount";
-    progressPercent.value = progressCount / allCount;
+    progressPercent.value = allCount > 0 ? progressCount / allCount : 0.0;
     if(progressPercent.value > 1.0) progressPercent.value = 1.0;
 
     dailyWordCount.value = dailyCount ?? 0;

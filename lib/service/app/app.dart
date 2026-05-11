@@ -55,11 +55,26 @@ class AppService {
 
   Future<void> insertCustomBookToDb(String customBookName) async {
     var book = wordService.bookMap[customBookName];
+    print('[DB] insertCustomBookToDb "$customBookName" book=${book != null} words=${book?.words?.length}');
     if (book != null && book.words != null) {
+      int bId = int.tryParse(book.id ?? '0') ?? 0;
+      print('[DB] book.id="${book.id}" bId=$bId');
+      if (bId != 0) {
+        await wordDao.deleteBookWords(bId);
+        print('[DB] deleted old words for bookId=$bId');
+      }
+
       var wordPOs = book.words!.map((e) {
         return WordPO(word: e.id, book: book.id);
       }).toList();
-      await wordDao.addWords(wordPOs);
+
+      print('[DB] inserting ${wordPOs.length} WordPOs: ${wordPOs.map((e) => "word=${e.word} book=${e.book}").join(", ")}');
+      if (wordPOs.isNotEmpty) {
+        await wordDao.addWords(wordPOs);
+        print('[DB] insert done');
+      }
+    } else {
+      print('[DB] SKIP: book null or words null');
     }
   }
 

@@ -1,7 +1,8 @@
 // lib/service/word/word.dart
 import 'package:english/dicts/reader.dart';
+import 'package:english/util/dictionary.dart';
 import 'package:flutter/material.dart';
-import 'package:get_storage/get_storage.dart'; 
+import 'package:get_storage/get_storage.dart';
 import 'package:get/get.dart'; 
 
 class WordService {
@@ -62,6 +63,7 @@ class WordService {
         if (!systemBookNames.contains(name)) systemBookNames.add(name);
       }
 
+      loadFetchedWordsCache(wordMap);
       await loadCustomBooks();
       loaded = true;
     } finally {
@@ -73,16 +75,25 @@ class WordService {
     var storage = GetStorage();
     Map<String, dynamic> customData = storage.read('custom_books') ?? {};
 
+    print('[WORD] loadCustomBooks: customData keys=${customData.keys.toList()} wordMap size=${wordMap.length}');
     customBookNames.clear();
     customData.forEach((name, spells) {
       customBookNames.add(name);
       List<Word> words =[];
+      int found = 0, missing = 0;
       for (var s in spells) {
         var find = wordMap.values.firstWhere((e) => e.word == s, orElse: () => Word());
-        if (find.id != null) words.add(find);
+        if (find.id != null) {
+          words.add(find);
+          found++;
+        } else {
+          missing++;
+          print('[WORD]   spell "$s" NOT FOUND in wordMap');
+        }
       }
-      String id = storage.read('book_id_$name') ?? "c_${name.hashCode}";
+      String id = storage.read('book_id_$name') ?? "${name.hashCode.abs()}";
       bookMap[name] = Book(id: id, name: name, words: words);
+      print('[WORD] book "$name" id=$id: $found found, $missing missing, total=${words.length}');
     });
   }
 

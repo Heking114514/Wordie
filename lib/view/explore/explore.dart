@@ -25,6 +25,9 @@ class ExplorePage extends GetView<ExploreController> {
                 if (controller.searchResult.isEmpty && controller.searchInput.text.isEmpty) {
                   return _buildSystemBooksGrid(isDark);
                 }
+                if (controller.searchResult.isEmpty && controller.isSearchingApi.value) {
+                  return const Center(child: CircularProgressIndicator());
+                }
                 return _buildSearchResults(isDark);
               }),
             ),

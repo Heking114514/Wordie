@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../service/app/app.dart';
+import '../../util/dictionary.dart';
 
 class ImportController extends GetxController {
   final AppService appService = Get.find();
@@ -44,16 +45,29 @@ class ImportController extends GetxController {
       Get.snackbar("提示", "列表为空");
       return;
     }
-    
-    // 默认导入到 "raw words"
+
+    Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
+
+    int fetched = 0;
     for (var w in pendingWords) {
       await appService.wordService.addWordToRawLibrary(w);
+
+      if (appService.getWordBySpell(w) == null) {
+        final word = await fetchWordDefinition(w);
+        if (word != null) {
+          appService.wordService.wordMap[word.id!] = word;
+          fetched++;
+        }
+      }
     }
-    
-    // 同步到数据库
+
+    if (fetched > 0) {
+      await appService.wordService.loadCustomBooks();
+    }
     await appService.insertCustomBookToDb("raw words");
-    
-    Get.back();
-    Get.snackbar("成功", "已成功导入 ${pendingWords.length} 个单词到《raw words》");
+
+    Get.back(); // loading
+    Get.back(); // page
+    Get.snackbar("成功", "已导入 ${pendingWords.length} 个单词" + (fetched > 0 ? "（其中 $fetched 个从网络获取释义）" : ""));
   }
 }

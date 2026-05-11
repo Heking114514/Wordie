@@ -25,12 +25,24 @@ class Word {
       'ukVoice': this.ukVoice,
       'means': this.means,
       'helper': this.helper,
-      'sentences': this.sentences,
+      'sentences': this.sentences?.map((e) => {
+        'sentence': e.sentence,
+        'sentenceCn': e.sentenceCn,
+      }).toList(),
     };
   }
 
   factory Word.fromMap(Map<String, dynamic> map) {
-    var sentences = map['sentences'] as List<dynamic>;
+    var sentencesRaw = map['sentences'];
+    List<Sentence>? sentences;
+    if (sentencesRaw != null) {
+      sentences = (sentencesRaw as List<dynamic>).map((e) {
+        return Sentence(
+          sentence: e["sentence"] as String,
+          sentenceCn: e["sentenceCn"] as String,
+        );
+      }).toList();
+    }
     return Word(
       id: map['id'] as String?,
       word: map['word'] as String?,
@@ -38,12 +50,7 @@ class Word {
       ukVoice: map['ukVoice'] as String?,
       means: map['means'] as String?,
       helper: map['helper'] as String?,
-      sentences: sentences.map((e) {
-        return Sentence(
-          sentence: e["sentence"] as String,
-          sentenceCn: e["sentenceCn"] as String,
-        );
-      }).toList(),
+      sentences: sentences,
     );
   }
 

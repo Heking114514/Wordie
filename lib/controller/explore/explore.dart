@@ -5,6 +5,7 @@ import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import '../../entity/word/vo/word.dart';
 import '../../service/app/app.dart';
+import '../../util/dictionary.dart';
 import '../home/home_v2.dart';
 import '../main/main_controller.dart';
 
@@ -12,18 +13,68 @@ class ExploreController extends GetxController {
   final AppService appService = Get.find();
   var searchResult = <WordVO>[].obs;
   final TextEditingController searchInput = TextEditingController();
+  var isSearchingApi = false.obs;
 
   void search(String q) {
     if (q.isEmpty) {
       searchResult.clear();
+      isSearchingApi.value = false;
       return;
     }
-    var results = appService.wordService.wordMap.values
-        .where((w) => w.word!.toLowerCase().contains(q.toLowerCase()))
+
+    String query = q.toLowerCase().trim();
+
+    var allMatches = appService.wordService.wordMap.values
+        .where((w) => w.word != null && w.word!.toLowerCase().contains(query))
+        .toList();
+
+    allMatches.sort((a, b) {
+      String wordA = a.word!.toLowerCase();
+      String wordB = b.word!.toLowerCase();
+      bool exactA = wordA == query;
+      bool exactB = wordB == query;
+      if (exactA && !exactB) return -1;
+      if (!exactA && exactB) return 1;
+      bool startsA = wordA.startsWith(query);
+      bool startsB = wordB.startsWith(query);
+      if (startsA && !startsB) return -1;
+      if (!startsA && startsB) return 1;
+      if (wordA.length != wordB.length) {
+        return wordA.length.compareTo(wordB.length);
+      }
+      return wordA.compareTo(wordB);
+    });
+
+    var results = allMatches
         .take(20)
         .map((e) => appService.toWordVO(e)!)
         .toList();
+
     searchResult.value = results;
+
+    // 本地完全匹配没命中，且是纯英文单词 → 自动从 API 拉取
+    final hasExact = allMatches.any((w) => w.word!.toLowerCase() == query);
+    if (!hasExact && RegExp(r'^[a-zA-Z]+$').hasMatch(query) && query.length >= 2) {
+      _fetchFromApi(query);
+    }
+  }
+
+  void _fetchFromApi(String spell) async {
+    print('[SEARCH] _fetchFromApi "$spell" triggered');
+    isSearchingApi.value = true;
+    final word = await fetchWordDefinition(spell);
+    if (word != null) {
+      appService.wordService.wordMap[word.id!] = word;
+      print('[SEARCH] word added to wordMap, total=${appService.wordService.wordMap.length}');
+      final vo = appService.toWordVO(word);
+      if (vo != null) {
+        searchResult.insert(0, vo);
+        searchResult.refresh();
+      }
+    } else {
+      print('[SEARCH] fetchWordDefinition returned null for "$spell"');
+    }
+    isSearchingApi.value = false;
   }
 
   void addToCustomLibrary(WordVO word) async {
@@ -77,6 +128,7 @@ class ExploreController extends GetxController {
   }
 
   Future<void> _addWordToSpecificLibrary(String spell, String bookName) async {
+    print('[ADD] _addWordToSpecificLibrary spell="$spell" book="$bookName"');
     var storage = GetStorage();
     Map<String, dynamic> customData = storage.read('custom_books') ?? {};
 
@@ -86,13 +138,33 @@ class ExploreController extends GetxController {
       words.sort();
       customData[bookName] = words;
       await storage.write('custom_books', customData);
+      print('[ADD] saved spell to custom_books, book "$bookName" now has ${words.length} words');
 
       if (storage.read('book_id_$bookName') == null) {
-        await storage.write('book_id_$bookName', "c_${bookName.hashCode}");
+        String customId = DateTime.now().millisecondsSinceEpoch.toString().substring(5);
+        await storage.write('book_id_$bookName', customId);
+        print('[ADD] assigned new book_id=$customId');
       }
 
       await appService.wordService.loadCustomBooks();
       await appService.insertCustomBookToDb(bookName);
+
+      final existing = appService.getWordBySpell(spell);
+      print('[ADD] getWordBySpell("$spell") = ${existing != null ? "FOUND id=${existing.id}" : "NULL"}');
+      if (existing == null) {
+        print('[ADD] word not in wordMap, fetching from API...');
+        final fetched = await fetchWordDefinition(spell);
+        print('[ADD] fetchWordDefinition("$spell") = ${fetched != null ? "OK id=${fetched.id}" : "NULL"}');
+        if (fetched != null) {
+          appService.wordService.wordMap[fetched.id!] = fetched;
+          print('[ADD] added to wordMap[id=${fetched.id}], wordMap now has ${appService.wordService.wordMap.length} entries');
+          await appService.wordService.loadCustomBooks();
+          print('[ADD] after reloadCustomBooks, book words count: ${appService.wordService.bookMap[bookName]?.words?.length}');
+          await appService.insertCustomBookToDb(bookName);
+          Get.snackbar("收藏成功", "已从网络获取《$spell》释义并加入《$bookName》");
+          return;
+        }
+      }
 
       Get.snackbar("收藏成功", "已加入《$bookName》");
     } else {

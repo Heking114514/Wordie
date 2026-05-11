@@ -64,9 +64,9 @@ class ProfileController extends GetxController {
     totalLearned.value = learnedCount ?? 0;
 
     // 今日完成度
-    var allCount = await wordDao.queryWordCount(appService.bookId) ?? 1;
+    var allCount = await wordDao.queryWordCount(appService.bookId) ?? 0;
     var progressCount = await wordDao.queryProgressWordCount(appService.bookId) ?? 0;
-    double rate = progressCount / allCount;
+    double rate = allCount > 0 ? progressCount / allCount : 0.0;
     if (rate > 1.0) rate = 1.0;
     todayCompletionRate.value = "${(rate * 100).toInt()}%";
   }
