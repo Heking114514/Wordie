@@ -26,7 +26,8 @@ class HomeControllerV2 extends GetxController {
   AppService appService = Get.find();
   var wordDao = Get.find<WordDao>();
 
-  var tempReviewCount = 50.obs;
+  var tempReviewCount = 20.obs;
+  var tempReviewCycles = 3.obs;
   var tempReviewBook = ''.obs;
 
   String get greeting {
@@ -77,6 +78,20 @@ class HomeControllerV2 extends GetxController {
     fetchInfo();
   }
 
+  void startReview() {
+    // check for active batch on current book
+    int bId = appService.bookId;
+    var savedBatch = GetStorage().read('review_batch_$bId');
+    var savedPos = GetStorage().read('review_batch_pos_$bId') ?? 0;
+    if (savedBatch != null && savedBatch is List && savedBatch.isNotEmpty && (savedPos as int) < savedBatch.length) {
+      // active batch exists, go straight to review
+      toReview();
+      return;
+    }
+    // no active batch, show settings
+    showReviewSettingsDialog();
+  }
+
   void toReview() async {
     if (!isBookValid.value) {
       Get.snackbar("提示", "当前词书已失效，请重新选择一本词书");
@@ -88,15 +103,27 @@ class HomeControllerV2 extends GetxController {
     fetchInfo();
   }
 
-  void showReviewSettingsDialog() {
+  void showReviewSettingsDialog() async {
     tempReviewCount.value = appService.reviewDailyCount;
-    tempReviewBook.value = appService.bookName;
+    int cycles = GetStorage().read('review_cycles_${appService.bookId}') ?? 3;
+    tempReviewCycles.value = cycles;
     bool isDark = Get.isDarkMode;
 
-    final allBooks = <String>[
-      ...appService.wordService.systemBookNames,
-      ...appService.wordService.customBookNames,
-    ];
+    // only show books with review progress
+    var allBooks = <String>[];
+    for (var name in appService.wordService.systemBookNames) {
+      int c = await _getReviewCountForBook(name);
+      if (c > 0) allBooks.add(name);
+    }
+    for (var name in appService.wordService.customBookNames) {
+      int c = await _getReviewCountForBook(name);
+      if (c > 0) allBooks.add(name);
+    }
+    if (allBooks.isEmpty) {
+      Get.snackbar("提示", "暂无有复习进度的词书，先去学习吧");
+      return;
+    }
+    tempReviewBook.value = allBooks.contains(appService.bookName) ? appService.bookName : allBooks.first;
 
     Get.bottomSheet(
       Container(
@@ -145,12 +172,19 @@ class HomeControllerV2 extends GetxController {
                 builder: (ctx, snap) {
                   final count = snap.data ?? 0;
                   return Padding(
-                    padding: const EdgeInsets.only(top: 8, bottom: 15),
+                    padding: const EdgeInsets.only(top: 8, bottom: 5),
                     child: Text("该词书有 $count 个待复习词汇", style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B))),
                   );
                 },
               );
             }),
+            Obx(() => _buildSettingRow("每批复习数量", tempReviewCount.value,[10, 20, 30, 50], (v) {
+              tempReviewCount.value = v;
+            }, isDark)),
+            Obx(() => _buildSettingRow("滚动次数", tempReviewCycles.value,[1, 2, 3], (v) {
+              tempReviewCycles.value = v;
+            }, isDark)),
+            const SizedBox(height: 5),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -160,6 +194,9 @@ class HomeControllerV2 extends GetxController {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: () {
+                  appService.reviewDailyCount = tempReviewCount.value;
+                  GetStorage().write('review_target_${appService.getBookId(tempReviewBook.value)}', tempReviewCount.value);
+                  GetStorage().write('review_cycles_${appService.getBookId(tempReviewBook.value)}', tempReviewCycles.value);
                   if (tempReviewBook.value != appService.bookName) {
                     appService.selectBook(tempReviewBook.value);
                     fetchInfo();

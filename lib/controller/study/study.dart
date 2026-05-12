@@ -113,6 +113,8 @@ class StudyController extends GetxController with WidgetsBindingObserver {
 
   var playingIndex = 0;
   var playingWords = <WordVO>[];
+  var bookWordStatusMap = <String, WordStatusPO?>{};
+  final _sessionPassedIds = <String>{};
 
   var timeRecord = _StudyTimeRecorder(service: Get.find());
   var sessionPassCount = 0.obs;
@@ -225,6 +227,7 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     GetStorage().write('book_order_${appService.bookId}', orderPref);
     GetStorage().write('study_cursor_${appService.bookId}', '');
     GetStorage().write('study_cursor_desc_${appService.bookId}', '');
+    GetStorage().write('study_cursor_manual_${appService.bookId}', '');
     Get.offAllNamed("/main");
     Get.snackbar("重学已开启", "进度已重置，下次学习将按您的偏好顺序进行！", snackPosition: SnackPosition.BOTTOM);
   }
@@ -241,8 +244,7 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     bookTotalCount.value = await wordDao.queryWordCount(appService.bookId) ?? 0;
 
     if (Get.parameters['mode'] == 'review') {
-      sessionPassCount.value = GetStorage().read('review_passed_${appService.bookId}') ?? 0;
-      reviewCount.value = GetStorage().read('review_target_${appService.bookId}') ?? 0;
+      reviewCount.value = playingWords.length;
     } else {
       var rCount = await wordDao.queryAdapter.query(
         'select count(distinct word.word) as count from word_status status left join word word on word.word = status.word where status.status=1 and word.book=?1',
@@ -257,20 +259,152 @@ class StudyController extends GetxController with WidgetsBindingObserver {
   }
 
   Future<void> fetchWords() async {
-    var studyQueueMaxCount = isManualMode.value ? 30 : appService.queueCount;
-    playingWords = await studyService.fetchStudyQueueWords(studyQueueMaxCount);
-    playingIndex = 0;
+    String modeParam = Get.parameters['mode'] ?? 'new';
+    if (modeParam == 'review') {
+      // try to resume existing batch first
+      var savedBatch = GetStorage().read('review_batch_${appService.bookId}');
+      var savedPos = GetStorage().read('review_batch_pos_${appService.bookId}') ?? 0;
+      if (savedBatch != null && savedBatch is List && savedBatch.isNotEmpty) {
+        List<WordVO> batch = [];
+        for (var id in savedBatch) {
+          var wordData = appService.getWord(id);
+          if (wordData != null) {
+            var vo = appService.toWordVO(wordData);
+            if (vo != null) batch.add(vo);
+          }
+        }
+        if (batch.isNotEmpty && (savedPos as int) < batch.length) {
+          playingWords = batch;
+          playingIndex = savedPos;
+          bookWordStatusMap = await studyService.fetchBookWordStatusMap();
+          return;
+        }
+      }
+      // create new batch
+      int target = GetStorage().read('review_target_${appService.bookId}') ?? 20;
+      int cycles = GetStorage().read('review_cycles_${appService.bookId}') ?? 3;
+      playingWords = await studyService.createReviewBatch(target, cycles);
+      playingIndex = 0;
+      bookWordStatusMap = await studyService.fetchBookWordStatusMap();
+    } else if (isManualMode.value) {
+      playingWords = await studyService.fetchAllBookWords();
+      bookWordStatusMap = await studyService.fetchBookWordStatusMap();
+      _restorePosition();
+    } else {
+      var studyQueueMaxCount = appService.queueCount;
+      playingWords = await studyService.fetchStudyQueueWords(studyQueueMaxCount);
+      playingIndex = 0;
+    }
   }
 
   void _loadManualWord() async {
     if (playingIndex >= 0 && playingIndex < playingWords.length) {
-      isRevealed.value = false;
       word.value = playingWords[playingIndex];
       var wordId = word.value?.wordId;
-      if (wordId != null) wordStatus.value = await wordDao.queryWordStatus(wordId);
+      String modeParam = Get.parameters['mode'] ?? 'new';
+      if (wordId != null) {
+        var status = bookWordStatusMap[wordId];
+        wordStatus.value = status;
+        bool isLearned = (status?.status == 1) || ((status?.studyCycle ?? 0) > 0);
+        isRevealed.value = modeParam == 'review' ? false : isLearned;
+        if (isRevealed.value && appService.autoPlayVoice) {
+          playWordSound(word.value?.word, 1);
+        }
+      } else {
+        wordStatus.value = null;
+        isRevealed.value = false;
+      }
+      _savePosition();
     } else {
       word.value = null;
     }
+  }
+
+  void _savePosition() {
+    if (playingWords.isNotEmpty && playingIndex >= 0 && playingIndex < playingWords.length) {
+      String? wordId = playingWords[playingIndex].wordId;
+      if (wordId != null) {
+        GetStorage().write('study_cursor_manual_${appService.bookId}', wordId);
+      }
+    }
+  }
+
+  void _restorePosition() {
+    String? savedWordId = GetStorage().read('study_cursor_manual_${appService.bookId}');
+    if (savedWordId != null) {
+      int idx = playingWords.indexWhere((w) => w.wordId == savedWordId);
+      if (idx >= 0) {
+        playingIndex = idx;
+        return;
+      }
+    }
+    playingIndex = 0;
+  }
+
+  Future<void> _completeReviewBatch() async {
+    var selectedRaw = GetStorage().read('review_batch_selected_${appService.bookId}');
+    List<String> selected = selectedRaw != null
+        ? List<String>.from(selectedRaw is List ? selectedRaw : [])
+        : [];
+    var roundDoneRaw = GetStorage().read('review_round_done_${appService.bookId}');
+    List<String> roundDone = roundDoneRaw != null
+        ? List<String>.from(roundDoneRaw is List ? roundDoneRaw : [])
+        : [];
+    for (var w in selected) {
+      if (!roundDone.contains(w)) roundDone.add(w);
+    }
+    GetStorage().write('review_round_done_${appService.bookId}', roundDone);
+    GetStorage().remove('review_batch_${appService.bookId}');
+    GetStorage().remove('review_batch_pos_${appService.bookId}');
+    GetStorage().remove('review_batch_selected_${appService.bookId}');
+    int avail = GetStorage().read('review_round_done_${appService.bookId}') != null
+        ? await studyService.getAvailableReviewCount()
+        : selected.length;
+    Get.dialog(
+      AlertDialog(
+        title: const Text("本批复习完成"),
+        content: Text("共复习 ${selected.length} 个词，每词滚动 ${(playingWords.length / (selected.length > 0 ? selected.length : 1)).round()} 次${avail > 0 ? '\n还有 $avail 个词可复习' : '\n本轮全部完成！'}"),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Get.back();
+              Get.offAllNamed("/main");
+            },
+            child: const Text("返回首页"),
+          ),
+          if (avail > 0)
+            TextButton(
+              onPressed: () {
+                Get.back();
+                _sessionPassedIds.clear();
+                _init();
+              },
+              child: const Text("再复习一批"),
+            ),
+        ],
+      ),
+      barrierDismissible: false,
+    );
+  }
+
+  void jumpToLearningPosition() {
+    if (!isManualMode.value || playingWords.isEmpty) return;
+    int targetIndex = -1;
+    for (int i = 0; i < playingWords.length; i++) {
+      var wordId = playingWords[i].wordId;
+      if (wordId == null) continue;
+      var status = bookWordStatusMap[wordId];
+      if (status == null || status.status != 1) {
+        targetIndex = i;
+        break;
+      }
+    }
+    if (targetIndex == -1) {
+      Get.snackbar("提示", "本书所有单词都已学习完毕");
+      return;
+    }
+    playingIndex = targetIndex;
+    _loadManualWord();
   }
 
   void manualReveal() {
@@ -380,14 +514,6 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     if (isManualMode.value) {
       if (playingIndex < playingWords.length - 1) {
         playingIndex++;
-      } else {
-        var nextW = await studyService.fetchNextWord();
-        if (nextW != null) {
-          playingWords.add(nextW);
-          playingIndex++;
-        } else {
-          playingIndex++;
-        }
       }
       _loadManualWord();
     } else {
@@ -409,8 +535,6 @@ class StudyController extends GetxController with WidgetsBindingObserver {
       if (playingIndex > 0) {
         playingIndex--;
         _loadManualWord();
-      } else {
-        Get.snackbar("提示", "已经是本次学习的第一个词了");
       }
     } else {
       playingIndex--;
@@ -429,10 +553,28 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     var wId = word.value?.wordId;
     if (wId != null) {
       await studyService.pass(wId);
-      sessionPassCount.value++;
+      if (!_sessionPassedIds.contains(wId)) {
+        _sessionPassedIds.add(wId);
+        sessionPassCount.value++;
+      }
     }
 
     if (isManualMode.value) {
+      if (wId != null) {
+        var currentStatus = bookWordStatusMap[wId] ?? WordStatusPO(word: wId);
+        currentStatus.status = 1;
+        currentStatus.studyCycle = (currentStatus.studyCycle ?? 0) + 1;
+        bookWordStatusMap[wId] = currentStatus;
+      }
+      String modeParam = Get.parameters['mode'] ?? 'new';
+      if (modeParam == 'review') {
+        // advance batch position
+        int pos = GetStorage().read('review_batch_pos_${appService.bookId}') ?? 0;
+        GetStorage().write('review_batch_pos_${appService.bookId}', pos + 1);
+        if (pos + 1 >= playingWords.length) {
+          _completeReviewBatch();
+        }
+      }
       controlEnable.value = true;
       next();
     } else {
@@ -459,8 +601,17 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     if (wId != null) await studyService.delete(wId);
 
     if (isManualMode.value) {
+      if (wId != null) {
+        var currentStatus = bookWordStatusMap[wId] ?? WordStatusPO(word: wId);
+        currentStatus.status = -1;
+        bookWordStatusMap[wId] = currentStatus;
+      }
+      playingWords.removeAt(playingIndex);
+      if (playingIndex >= playingWords.length) {
+        playingIndex = (playingWords.length - 1).clamp(0, playingWords.length - 1);
+      }
       controlEnable.value = true;
-      next();
+      _loadManualWord();
     } else {
       var nextW = await studyService.fetchNextWord();
       if (nextW != null) {

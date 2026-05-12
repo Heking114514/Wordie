@@ -171,12 +171,16 @@ Widget _buildOptionTile(String title, String value) {
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 10.0),
                       child: IconButton(
-                          onPressed: controller.isManualMode.value ? null : () => showOptions(context),
-                          icon: Icon(
-                            Icons.av_timer,
-                            size: 32,
-                            color: controller.isManualMode.value ? Colors.grey.withOpacity(0.3) : null,
-                          )),
+                        onPressed: controller.isManualMode.value
+                            ? () => controller.jumpToLearningPosition()
+                            : () => showOptions(context),
+                        icon: Icon(
+                          controller.isManualMode.value ? Icons.flag_rounded : Icons.av_timer,
+                          size: 32,
+                          color: controller.isManualMode.value ? Colors.blueAccent : null,
+                        ),
+                        tooltip: controller.isManualMode.value ? "跳转到学习位置" : null,
+                      ),
                     ),
                   ),
                   Align(
@@ -356,7 +360,7 @@ Widget _buildOptionTile(String title, String value) {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  Get.parameters['mode'] == 'review' ? "今日已复习: " : "已学习: ",
+                  Get.parameters['mode'] == 'review' ? "本批已复习: " : "已学习: ",
                   style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
                 ),
                 Obx(() => Text(
@@ -366,15 +370,20 @@ Widget _buildOptionTile(String title, String value) {
                   style: TextStyle(color: isDark ? Colors.greenAccent.withOpacity(0.8) : Colors.green.withOpacity(0.8), fontSize: 12),
                 )),
                 Text(
-                  Get.parameters['mode'] == 'review' ? "    今日复习目标: " : "    本书词汇: ",
+                  Get.parameters['mode'] == 'review' ? "    批次进度: " : "    本书词汇: ",
                   style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
                 ),
                 Obx(() => Text(
                   Get.parameters['mode'] == 'review'
-                      ? "${controller.reviewCount.value}"
+                      ? "${controller.playingIndex + 1}/${controller.reviewCount.value}"
                       : "${controller.bookTotalCount.value}",
                   style: TextStyle(color: isDark ? Colors.redAccent.shade100 : Colors.redAccent.withOpacity(0.8), fontSize: 12),
                 )),
+                if (controller.isManualMode.value && Get.parameters['mode'] != 'review')
+                  Text(
+                    "  位置: ${controller.playingIndex + 1}/${controller.playingWords.length}",
+                    style: TextStyle(color: isDark ? Colors.white38 : Colors.grey.withOpacity(0.6), fontSize: 12),
+                  ),
               ],
             ),
           ),

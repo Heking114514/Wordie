@@ -59,8 +59,10 @@ class _SplashPageState extends State<SplashPage> {
           Container(color: Colors.black.withOpacity(0.6)),
 
           Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+            child: Transform.translate(
+              offset: const Offset(0, -55),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 TweenAnimationBuilder<double>(
                   tween: Tween(begin: 0.0, end: 1.0),
@@ -133,6 +135,7 @@ class _SplashPageState extends State<SplashPage> {
                   ),
                 ),
               ],
+            ),
             ),
           ),
 

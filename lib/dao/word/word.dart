@@ -152,6 +152,25 @@ abstract class WordDao {
     return wordList;
   }
 
+  Future<List<WordStatusPO>> queryWordStatusByBook(int book) async {
+    var results = await queryAdapter.queryList(
+      '''select status.* from word_status status
+         inner join word word on word.word = status.word
+         where word.book=?1''',
+      mapper: (Map<String, Object?> row) => WordStatusPO(
+        id: row['id'] as int?,
+        word: row['word'] as String?,
+        status: row['status'] as int?,
+        studyCycle: row['studyCycle'] as int?,
+        nextReviewTime: row['nextReviewTime'] as int?,
+        createTime: row['createTime'] as int?,
+        updateTime: row['updateTime'] as int?,
+      ),
+      arguments: [book],
+    );
+    return results;
+  }
+
   Future<int?> queryDailyPassWordCount() async {
     var count = await queryAdapter.query(
       '''select count(distinct word.word) as count from  word_status status

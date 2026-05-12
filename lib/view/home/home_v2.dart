@@ -202,7 +202,7 @@ class HomeViewV2 extends GetView<HomeControllerV2> {
             children:[
               Expanded(
                 child: GestureDetector(
-                  onTap: () => controller.showReviewSettingsDialog(), 
+                  onTap: () => controller.startReview(),
                   child: Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(color: isDark ? const Color(0xFF2563EB) : const Color(0xFF3B82F6), borderRadius: BorderRadius.circular(20)),
