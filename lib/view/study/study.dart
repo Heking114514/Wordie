@@ -171,12 +171,11 @@ Widget _buildOptionTile(String title, String value) {
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 10.0),
                       child: IconButton(
-                          onPressed: () {
-                            showOptions(context);
-                          },
+                          onPressed: controller.isManualMode.value ? null : () => showOptions(context),
                           icon: Icon(
                             Icons.av_timer,
                             size: 32,
+                            color: controller.isManualMode.value ? Colors.grey.withOpacity(0.3) : null,
                           )),
                     ),
                   ),
@@ -225,9 +224,9 @@ Widget _buildOptionTile(String title, String value) {
             child: Obx(() {
               return WordView(
                 word: controller.word.value,
-                showDetail:
-                    controller.autoRotating || !controller.thinking.value,
+                showDetail: controller.autoRotating || !controller.thinking.value,
                 cycle: controller.wordStatus.value?.studyCycle ?? 0,
+                hideDetails: controller.isManualMode.value && !controller.isRevealed.value,
               );
             }),
           ),
@@ -241,8 +240,14 @@ Widget _buildOptionTile(String title, String value) {
 
     return Stack(
       children: [
-        Container(
+        Positioned.fill(
           child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {
+              if (controller.isManualMode.value && !controller.isRevealed.value) {
+                controller.manualReveal();
+              }
+            },
             onDoubleTap: () {
               controller.next();
             },
@@ -256,7 +261,7 @@ Widget _buildOptionTile(String title, String value) {
             rotateZ: false,
             rotateX: false,
             rotateY: true,
-            duration: Duration(milliseconds: 5),
+            duration: const Duration(milliseconds: 5),
             child: buildWordContent(context),
           ),
         if (!controller.autoRotating) buildWordContent(context),
@@ -265,11 +270,16 @@ Widget _buildOptionTile(String title, String value) {
           Align(
             alignment: Alignment.bottomCenter,
             child: Obx(() {
-              if (controller.thinking.value == true ||
-                  controller.playing.value == false) return Container();
+              if (!controller.isManualMode.value &&
+                  (controller.thinking.value == true || controller.playing.value == false)) {
+                return const SizedBox();
+              }
+              if (controller.isManualMode.value && !controller.isRevealed.value) {
+                return const SizedBox();
+              }
+
               return Container(
-                margin:
-                    const EdgeInsets.only(bottom: 100.0, left: 50, right: 50),
+                margin: const EdgeInsets.only(bottom: 100.0, left: 50, right: 50),
                 width: 100,
                 height: 100,
                 child: Ink(
@@ -286,27 +296,14 @@ Widget _buildOptionTile(String title, String value) {
                   child: InkWell(
                       borderRadius: BorderRadius.circular(100),
                       onTap: controller.controlEnable.value
-                          ? () {
-                              controller.pass();
-                            }
+                          ? () => controller.pass()
                           : null,
                       child: Container(
                         padding: const EdgeInsets.all(10),
                         child: Column(
                           children: [
-                            Icon(
-                              Icons.check,
-                              color: isDark ? Colors.white54 : Colors.black12,
-                              size: 50,
-                            ),
-                            Text(
-                              "PASS",
-                              style: TextStyle(
-                                color: isDark ? Colors.white54 : Colors.black12,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                              ),
-                            ),
+                            Icon(Icons.check, color: isDark ? Colors.white54 : Colors.black12, size: 50),
+                            Text("PASS", style: TextStyle(color: isDark ? Colors.white54 : Colors.black12, fontWeight: FontWeight.bold, fontSize: 14)),
                           ],
                         ),
                       )),
@@ -319,9 +316,10 @@ Widget _buildOptionTile(String title, String value) {
           Align(
             alignment: Alignment.topRight,
             child: Obx(() {
+              if (controller.isManualMode.value && !controller.isRevealed.value) return const SizedBox();
+
               return Container(
-                margin:
-                    const EdgeInsets.symmetric(vertical: 20.0, horizontal: 20),
+                margin: const EdgeInsets.symmetric(vertical: 20.0, horizontal: 20),
                 width: 36,
                 height: 36,
                 child: Ink(
@@ -338,19 +336,12 @@ Widget _buildOptionTile(String title, String value) {
                   ),
                   child: InkWell(
                       borderRadius: BorderRadius.circular(100),
-                      onTap: controller.controlEnable.value &&
-                              controller.thinking.value == false
-                          ? () {
-                              controller.delete();
-                            }
+                      onTap: controller.controlEnable.value && controller.thinking.value == false
+                          ? () => controller.delete()
                           : null,
                       child: Container(
                         alignment: Alignment.center,
-                        child: Icon(
-                          Icons.delete_outline_rounded,
-                          color: Colors.red,
-                          size: 24,
-                        ),
+                        child: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 24),
                       )),
                 ),
               );
@@ -360,7 +351,7 @@ Widget _buildOptionTile(String title, String value) {
         Align(
           alignment: Alignment.bottomLeft,
           child: Container(
-            padding: EdgeInsets.all(10),
+            padding: const EdgeInsets.all(10),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -368,26 +359,22 @@ Widget _buildOptionTile(String title, String value) {
                   Get.parameters['mode'] == 'review' ? "今日已复习: " : "已学习: ",
                   style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
                 ),
-                Obx(() {
-                  return Text(
-                    Get.parameters['mode'] == 'review'
-                        ? "${controller.sessionPassCount.value}"
-                        : "${controller.bookLearnedCount.value}",
-                    style: TextStyle(color: isDark ? Colors.greenAccent.withOpacity(0.8) : Colors.green.withOpacity(0.8), fontSize: 12),
-                  );
-                }),
+                Obx(() => Text(
+                  Get.parameters['mode'] == 'review'
+                      ? "${controller.sessionPassCount.value}"
+                      : "${controller.bookLearnedCount.value}",
+                  style: TextStyle(color: isDark ? Colors.greenAccent.withOpacity(0.8) : Colors.green.withOpacity(0.8), fontSize: 12),
+                )),
                 Text(
                   Get.parameters['mode'] == 'review' ? "    今日复习目标: " : "    本书词汇: ",
                   style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
                 ),
-                Obx(() {
-                  return Text(
-                    Get.parameters['mode'] == 'review'
-                        ? "${controller.reviewCount.value}"
-                        : "${controller.bookTotalCount.value}",
-                    style: TextStyle(color: isDark ? Colors.redAccent.shade100 : Colors.redAccent.withOpacity(0.8), fontSize: 12),
-                  );
-                }),
+                Obx(() => Text(
+                  Get.parameters['mode'] == 'review'
+                      ? "${controller.reviewCount.value}"
+                      : "${controller.bookTotalCount.value}",
+                  style: TextStyle(color: isDark ? Colors.redAccent.shade100 : Colors.redAccent.withOpacity(0.8), fontSize: 12),
+                )),
               ],
             ),
           ),
@@ -396,20 +383,12 @@ Widget _buildOptionTile(String title, String value) {
         Align(
           alignment: Alignment.bottomRight,
           child: Container(
-            padding: EdgeInsets.all(10),
+            padding: const EdgeInsets.all(10),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  "时长: ",
-                  style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
-                ),
-                Obx(() {
-                  return Text(
-                    "${controller.studyTime.value}",
-                    style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
-                  );
-                }),
+                Text("时长: ", style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12)),
+                Obx(() => Text("${controller.studyTime.value}", style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12))),
               ],
             ),
           ),

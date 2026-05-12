@@ -88,9 +88,7 @@ class SelectBookPage extends GetView<SelectBookController> {
                 },
                 onTap: () {
                   Get.back();
-                  controller.appService.selectBook(name);
-                  if (Get.isRegistered<HomeControllerV2>()) Get.find<HomeControllerV2>().fetchInfo();
-                  Get.snackbar("切换成功", "已切换至自定义词书《$name》");
+                  controller.appService.promptAndSelectBook(name);
                 },
                 borderRadius: BorderRadius.circular(12),
                 child: Column(

@@ -10,6 +10,7 @@ class WordView extends StatelessWidget {
   final bool ukVoice;
   final bool showDetail;
   final int cycle;
+  final bool hideDetails;
 
   const WordView({
     Key? key,
@@ -17,6 +18,7 @@ class WordView extends StatelessWidget {
     this.ukVoice = true,
     this.showDetail = true,
     this.cycle = 0,
+    this.hideDetails = false,
   }) : super(key: key);
 
   @override
@@ -73,11 +75,25 @@ class WordView extends StatelessWidget {
 
           const SizedBox(height: 8),
 
-          // --- 音标播放区域 ---
-          _buildPhoneticSection(context, secondaryTextColor),
+          // --- 音标播放区域 (hidden in manual pre-reveal) ---
+          if (!hideDetails) _buildPhoneticSection(context, secondaryTextColor),
+
+          // --- 手动模式下未揭晓时的提示 ---
+          if (hideDetails)
+            Container(
+              margin: const EdgeInsets.only(top: 50),
+              alignment: Alignment.center,
+              child: Column(
+                children: [
+                  Icon(Icons.touch_app, size: 48, color: Colors.grey.withOpacity(0.3)),
+                  const SizedBox(height: 12),
+                  Text("点击屏幕任意位置显示释义发音", style: TextStyle(color: Colors.grey.withOpacity(0.8), fontSize: 16, letterSpacing: 1.2)),
+                ],
+              ),
+            ),
 
           // --- 单词释义卡片 ---
-          if (showDetail)
+          if (showDetail && !hideDetails)
             Container(
               width: double.infinity,
               margin: const EdgeInsets.only(top: 20),
@@ -100,7 +116,7 @@ class WordView extends StatelessWidget {
             ),
 
           // --- 例句展示区域 ---
-          if (showDetail)
+          if (showDetail && !hideDetails)
             Container(
               margin: const EdgeInsets.only(top: 24),
               child: Column(

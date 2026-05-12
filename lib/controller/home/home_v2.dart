@@ -27,8 +27,7 @@ class HomeControllerV2 extends GetxController {
   var wordDao = Get.find<WordDao>();
 
   var tempReviewCount = 50.obs;
-  var tempQueueCount = 4.obs;
-  var tempWaitTime = 7.obs;
+  var tempReviewBook = ''.obs;
 
   String get greeting {
     var hour = DateTime.now().hour;
@@ -91,10 +90,13 @@ class HomeControllerV2 extends GetxController {
 
   void showReviewSettingsDialog() {
     tempReviewCount.value = appService.reviewDailyCount;
-    tempQueueCount.value = appService.queueCount;
-    tempWaitTime.value = appService.readWaitTime;
-
+    tempReviewBook.value = appService.bookName;
     bool isDark = Get.isDarkMode;
+
+    final allBooks = <String>[
+      ...appService.wordService.systemBookNames,
+      ...appService.wordService.customBookNames,
+    ];
 
     Get.bottomSheet(
       Container(
@@ -109,17 +111,46 @@ class HomeControllerV2 extends GetxController {
           children:[
             Text("复习设置", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
             const SizedBox(height: 15),
-            Obx(() => Text("复习范围：优先提取《${wordBook.value}》的待复习词汇", style: TextStyle(fontSize: 13, color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B)))),
-            Obx(() => _buildSettingRow("每天复习数量", tempReviewCount.value,[10, 20, 50, 100, 200], (v) {
-              tempReviewCount.value = v;
-            }, isDark)),
-            Obx(() => _buildSettingRow("每组单词数量", tempQueueCount.value,[2, 4, 6, 8, 10], (v) {
-              tempQueueCount.value = v;
-            }, isDark)),
-            Obx(() => _buildSettingRow("停留时间(秒)", tempWaitTime.value,[3, 5, 7, 10, 15], (v) {
-              tempWaitTime.value = v;
-            }, isDark)),
+            Text("复习模式已固定为：手动沉浸模式", style: TextStyle(fontSize: 13, color: const Color(0xFF6366F1), fontWeight: FontWeight.bold)),
             const SizedBox(height: 15),
+            Text("选择要复习的词书", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: isDark ? Colors.white70 : Colors.black87)),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Obx(() => DropdownButton<String>(
+                value: allBooks.contains(tempReviewBook.value) ? tempReviewBook.value : allBooks.first,
+                isExpanded: true,
+                underline: const SizedBox(),
+                dropdownColor: isDark ? const Color(0xFF1E293B) : Colors.white,
+                style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 15),
+                items: allBooks.map((b) => DropdownMenuItem(
+                  value: b,
+                  child: Text(b, style: TextStyle(color: isDark ? Colors.white : Colors.black)),
+                )).toList(),
+                onChanged: (v) {
+                  if (v != null) tempReviewBook.value = v;
+                },
+              )),
+            ),
+            Obx(() {
+              final book = appService.wordService.bookMap[tempReviewBook.value];
+              if (book == null) return const SizedBox.shrink();
+              return FutureBuilder<int>(
+                key: ValueKey(tempReviewBook.value),
+                future: _getReviewCountForBook(tempReviewBook.value),
+                builder: (ctx, snap) {
+                  final count = snap.data ?? 0;
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 8, bottom: 15),
+                    child: Text("该词书有 $count 个待复习词汇", style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B))),
+                  );
+                },
+              );
+            }),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -129,11 +160,10 @@ class HomeControllerV2 extends GetxController {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: () {
-                  appService.reviewDailyCount = tempReviewCount.value;
-                  appService.queueCount = tempQueueCount.value;
-                  appService.readWaitTime = tempWaitTime.value;
-                  appService.saveOptions();
-
+                  if (tempReviewBook.value != appService.bookName) {
+                    appService.selectBook(tempReviewBook.value);
+                    fetchInfo();
+                  }
                   Get.back();
                   toReview();
                 },
@@ -145,6 +175,19 @@ class HomeControllerV2 extends GetxController {
       ),
       isScrollControlled: true,
     );
+  }
+
+  Future<int> _getReviewCountForBook(String bookName) async {
+    var book = appService.wordService.bookMap[bookName];
+    if (book == null) return 0;
+    int bId = int.tryParse(book.id ?? '0') ?? 0;
+    if (bId == 0) return 0;
+    var count = await wordDao.queryAdapter.query(
+      'select count(distinct word.word) as count from word_status status left join word word on word.word = status.word where status.status=1 and word.book=?1',
+      mapper: (Map<String, Object?> row) => (row['count'] as int?) ?? 0,
+      arguments: [bId],
+    );
+    return count ?? 0;
   }
 
   Widget _buildSettingRow(String title, int currentValue, List<int> options, Function(int) onChanged, bool isDark) {

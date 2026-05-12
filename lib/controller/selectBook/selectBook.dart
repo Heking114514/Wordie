@@ -84,6 +84,15 @@ class SelectBookController extends GetxController {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.settings_suggest, color: Colors.blue),
+              title: Text("重选播放模式", style: TextStyle(color: isDark ? Colors.white : Colors.black)),
+              onTap: () {
+                Get.back();
+                appService.showModeSelectionDialog(bookName, bId, context, isReselect: true);
+              },
+            ),
+            Divider(color: isDark ? Colors.white24 : Colors.black26),
+            ListTile(
               leading: const Icon(Icons.refresh, color: Colors.orange),
               title: const Text("清空本词书进度", style: TextStyle(color: Colors.orange)),
               onTap: () => _confirmClearProgress(bId, progressCount),

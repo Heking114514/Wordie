@@ -1,16 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:english/dao/word/word.dart';
 import 'package:english/entity/word/vo/word.dart';
 import 'package:english/service/app/app.dart';
 import 'package:english/service/study/study.dart';
-import 'package:english/service/word/word.dart';
-import 'package:english/view/review/list.dart';
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:wakelock/wakelock.dart';
 import 'package:get_storage/get_storage.dart';
@@ -51,10 +46,8 @@ class Player {
   void start() async {
     if (!_start) {
       for (;;) {
-        await const Duration(milliseconds: 100).delay();
-        if (_playing == false) {
-          break;
-        }
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (_playing == false) break;
       }
       _start = true;
       _playing = true;
@@ -67,10 +60,8 @@ class Player {
     stopTime = DateTime.now().millisecondsSinceEpoch;
     _start = false;
     for (;;) {
-      await const Duration(milliseconds: 100).delay();
-      if (_playing == false) {
-        break;
-      }
+      await Future.delayed(const Duration(milliseconds: 100));
+      if (_playing == false) break;
     }
   }
 
@@ -79,10 +70,10 @@ class Player {
       startTime = DateTime.now().millisecondsSinceEpoch;
       playComplete = true;
       if (_start) await thinkStart(this);
-      if (_start) await Duration(seconds: thinkTime).delay();
+      if (_start) await Future.delayed(Duration(seconds: thinkTime));
       if (_start) await thinkEnd(this);
       if (_start) await showStart(this);
-      if (_start) await Duration(seconds: showTime).delay();
+      if (_start) await Future.delayed(Duration(seconds: showTime));
       if (_start) await showEnd(this);
       if (!_start) playComplete = false;
       await onEnd(this);
@@ -108,11 +99,7 @@ class _StudyTimeRecorder {
     startTime = DateTime.now().millisecondsSinceEpoch;
   }
 
-  _StudyTimeRecorder({
-    this.startTime,
-    this.endTime,
-    required this.service,
-  });
+  _StudyTimeRecorder({this.startTime, this.endTime, required this.service});
 }
 
 class StudyController extends GetxController with WidgetsBindingObserver {
@@ -123,15 +110,20 @@ class StudyController extends GetxController with WidgetsBindingObserver {
   var playing = false.obs;
   var controlEnable = true.obs;
   var playButtonEnable = true.obs;
+
   var playingIndex = 0;
   var playingWords = <WordVO>[];
+
   var timeRecord = _StudyTimeRecorder(service: Get.find());
   var sessionPassCount = 0.obs;
   var bookLearnedCount = 0.obs;
   var bookTotalCount = 0.obs;
   var isInitializing = true.obs;
 
-  var reviewDailyCount = 50.obs; 
+  var isManualMode = false.obs;
+  var isRevealed = false.obs;
+
+  var reviewDailyCount = 50.obs;
 
   AppService appService = Get.find();
   StudyService studyService = StudyService();
@@ -152,18 +144,11 @@ class StudyController extends GetxController with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    switch (state) {
-      case AppLifecycleState.resumed:
-        timeRecord.recordStart();
-        break;
-      case AppLifecycleState.paused:
-        stopPlay();
-        timeRecord.recordEnd();
-        break;
-      case AppLifecycleState.inactive:
-        break;
-      case AppLifecycleState.detached:
-        break;
+    if (state == AppLifecycleState.resumed) {
+      timeRecord.recordStart();
+    } else if (state == AppLifecycleState.paused) {
+      stopPlay();
+      timeRecord.recordEnd();
     }
   }
 
@@ -179,10 +164,18 @@ class StudyController extends GetxController with WidgetsBindingObserver {
   void _init() async {
     isInitializing.value = true;
     await fetchOptions();
+
+    String modeParam = Get.parameters['mode'] ?? 'new';
+    if (modeParam == 'review') {
+      isManualMode.value = true;
+    } else {
+      isManualMode.value = appService.getStudyMode(appService.bookId) == 'manual';
+    }
+
     await fetchWords();
 
     if (playingWords.isEmpty) {
-      if (Get.parameters['mode'] == 'review') {
+      if (modeParam == 'review') {
         Get.offAllNamed("/main");
         Get.snackbar("提示", "当前没有任何要复习的单词，快去学一些吧", snackPosition: SnackPosition.BOTTOM);
         return;
@@ -190,7 +183,13 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     }
 
     await fetchCount();
-    await startPlay();
+
+    if (isManualMode.value) {
+      _loadManualWord();
+    } else {
+      await startPlay();
+    }
+
     isInitializing.value = false;
   }
 
@@ -205,7 +204,7 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     thinkWaitTime.listen((value) { appService.thinkWaitTime = value; appService.saveOptions(); });
     readWaitTime.listen((value) { appService.readWaitTime = value; appService.saveOptions(); });
     queueCount.listen((value) { appService.queueCount = value; appService.saveOptions(); });
-    
+
     reviewDailyCount.value = appService.reviewDailyCount;
     reviewDailyCount.listen((value) { appService.reviewDailyCount = value; appService.saveOptions(); });
   }
@@ -215,77 +214,20 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     Wakelock.disable();
     timeRecord.recordEnd();
     WidgetsBinding.instance?.removeObserver(this);
-    super.onClose();
     stopPlay();
+    super.onClose();
   }
 
-//   void onStudyComplete() async {
-//     String mode = Get.parameters['mode'] ?? 'new';
+  void reloadStudy() => _init();
 
-//     // === 判断新词学习是否已经耗尽整本书 ===
-//     if (mode == 'new') {
-//       var unstudied = await wordDao.queryAllNotStudyWords(appService.bookId);
-//       if (unstudied.isEmpty) {
-//         Get.dialog(
-//           AlertDialog(
-//             title: const Text("本书已经学完", style: TextStyle(fontWeight: FontWeight.bold)),
-//             content: const Text("恭喜你！这本词书的所有单词都已经学习完毕。\n您可以选择一种顺序重新学习本词书："),
-//             actions:[
-//               TextButton(onPressed: () { Get.back(); _restartBook('ASC'); }, child: const Text("正序重学(A-Z)")),
-//               TextButton(onPressed: () { Get.back(); _restartBook('DESC'); }, child: const Text("倒序重学(Z-A)")),
-//               TextButton(onPressed: () { Get.back(); _restartBook('RANDOM'); }, child: const Text("乱序重学")),
-//               TextButton(onPressed: () => Get.offAllNamed("/main"), child: const Text("返回首页", style: TextStyle(color: Colors.grey))),
-//             ],
-//           ),
-//           barrierDismissible: false,
-//         );
-//         return;
-//       }
-//     }
-
-//     Get.dialog(
-//       AlertDialog(
-//         title: Text(mode == 'review' ? "复习完成" : "学习完成"),
-//         content: Text(mode == 'review' ? "当前复习计划已完成，建议休息一下或继续下一组。" : "恭喜！新词学习任务已完成。"),
-//         actions:[
-//           if (mode == 'review') ...[
-//             TextButton(onPressed: () { Get.back(); reviewTodayAgain(); }, child: const Text("再复习今天")),
-//             TextButton(onPressed: () { Get.back(); _init(); }, child: const Text("复习下一天")),
-//           ] else ...[
-//             TextButton(onPressed: () { Get.back(); _init(); }, child: const Text("继续学习")),
-//           ],
-//           TextButton(onPressed: () => Get.offAllNamed("/main"), child: const Text("返回首页")),
-//         ],
-//       ),
-//       barrierDismissible: false,
-//     );
-//   }
-void reloadStudy() {
-    _init();
-  }
-
-  // 3. 将私有方法 _restartBook 改为公开方法 restartBook
   void restartBook(String orderPref) async {
-    // 清空当前词书进度
     await wordDao.clearBookProgress(appService.bookId);
-    // 写入重学顺序偏好（服务层底层会按偏好对所有书都进行字典序编排）
     GetStorage().write('book_order_${appService.bookId}', orderPref);
     GetStorage().write('study_cursor_${appService.bookId}', '');
     GetStorage().write('study_cursor_desc_${appService.bookId}', '');
-    // 返回首页，主页会自动刷新进度
     Get.offAllNamed("/main");
     Get.snackbar("重学已开启", "进度已重置，下次学习将按您的偏好顺序进行！", snackPosition: SnackPosition.BOTTOM);
   }
-
-//   void _restartBook(String orderPref) async {
-//     // 1. 清空当前词书进度
-//     await wordDao.clearBookProgress(appService.bookId);
-//     // 2. 写入重学顺序偏好（服务层底层会按偏好对所有书都进行 strictly compareTo 字典序编排）
-//     GetStorage().write('book_order_${appService.bookId}', orderPref);
-//     // 3. 返回首页，主页会自动刷新进度
-//     Get.offAllNamed("/main");
-//     Get.snackbar("重学已开启", "进度已重置，下次学习将按您的偏好顺序进行！", snackPosition: SnackPosition.BOTTOM);
-//   }
 
   void reviewTodayAgain() async {
     GetStorage().remove('review_date_${appService.bookId}');
@@ -293,8 +235,7 @@ void reloadStudy() {
   }
 
   Future<void> fetchCount() async {
-    var dailyCount = await wordDao.queryDailyPassWordCount();
-    dailyStudyCount.value = dailyCount ?? 0;
+    dailyStudyCount.value = (await wordDao.queryDailyPassWordCount()) ?? 0;
 
     bookLearnedCount.value = await wordDao.queryProgressWordCount(appService.bookId) ?? 0;
     bookTotalCount.value = await wordDao.queryWordCount(appService.bookId) ?? 0;
@@ -312,48 +253,41 @@ void reloadStudy() {
     }
 
     var time = (await wordDao.queryStudyTime()) ?? 0;
-    var use = (time / 1000 / 60).toStringAsFixed(1);
-    studyTime.value = use + " 分钟";
+    studyTime.value = (time / 1000 / 60).toStringAsFixed(1) + " 分钟";
   }
 
   Future<void> fetchWords() async {
-    var studyQueueMaxCount = appService.queueCount;
-    var words = await studyService.fetchStudyQueueWords(studyQueueMaxCount);
-    playingWords = words;
+    var studyQueueMaxCount = isManualMode.value ? 30 : appService.queueCount;
+    playingWords = await studyService.fetchStudyQueueWords(studyQueueMaxCount);
+    playingIndex = 0;
   }
 
-  Future<void> fetchNextWord(int index) async {
-    var next = await studyService.fetchNextWord();
-    if (next != null) {
-      playingWords[index] = next;
-      playingIndex++;
-      if (playingIndex >= playingWords.length) {
-        playingIndex = 0;
-      }
+  void _loadManualWord() async {
+    if (playingIndex >= 0 && playingIndex < playingWords.length) {
+      isRevealed.value = false;
+      word.value = playingWords[playingIndex];
+      var wordId = word.value?.wordId;
+      if (wordId != null) wordStatus.value = await wordDao.queryWordStatus(wordId);
     } else {
-      playingWords.removeAt(index);
-      if (playingWords.isEmpty) {
-        word.value = null; // 非常关键：赋空后会自动触发渲染 buildEndView，展现我们刚刚写的按钮！
-        stopPlay();
-      }
+      word.value = null;
     }
   }
 
-  Future<void> stopPlay() async {
-    if (!playButtonEnable.value) return;
-    thinking.value = false;
-    playButtonEnable.value = false;
-    player?.stop();
-    playing.value = false;
-    playButtonEnable.value = true;
+  void manualReveal() {
+    if (isRevealed.value) return;
+    isRevealed.value = true;
+    if (appService.autoPlayVoice) {
+      playWordSound(word.value?.word, 1);
+    }
   }
 
   Future<void> startPlay() async {
+    if (isManualMode.value) return;
     if (!playButtonEnable.value) return;
     playButtonEnable.value = false;
     player?.stop();
     playing.value = true;
-    
+
     player = Player.create(
       thinkTime: thinkWaitTime.value,
       showTime: readWaitTime.value,
@@ -362,11 +296,9 @@ void reloadStudy() {
         wordStatus.value = null;
         var index = playingIndex;
         var arr = playingWords;
-        
-        if (index >= arr.length) {
-          playingIndex = index = 0;
-        }
-        
+
+        if (index >= arr.length) playingIndex = index = 0;
+
         if (index < arr.length) {
           word.value = arr[index];
           var wordId = arr[index].wordId;
@@ -374,17 +306,15 @@ void reloadStudy() {
             player.wordStatus = await wordDao.queryWordStatus(wordId);
             wordStatus.value = player.wordStatus;
           }
-          
           if (appService.autoPlayVoice) {
             await playWordSound(word.value?.word, 1);
           }
-          
         } else {
           word.value = null;
           wordStatus.value = null;
           stopPlay();
         }
-        
+
         player.showTime = readWaitTime.value;
         var cycle = player.wordStatus?.studyCycle;
         if (cycle != null && readWaitTime.value > 0) {
@@ -397,18 +327,15 @@ void reloadStudy() {
       thinkEnd: (Player player) async {
         thinking.value = false;
       },
-      showStart: (Player player) async {
-      },
+      showStart: (Player player) async {},
       showEnd: (Player player) async {
-        if (appService.autoPass == true) {
+        if (appService.autoPass) {
           var key = player.wordStatus?.word ?? "";
           var wordPlayCount = playCount[key] ?? 0;
           wordPlayCount++;
           playCount[key] = wordPlayCount;
           var cycle = player.wordStatus?.studyCycle ?? 0;
-          if (wordPlayCount > 3 || (cycle == 1 && wordPlayCount == 2) || cycle > 1) {
-            return;
-          }
+          if (wordPlayCount > 3 || (cycle == 1 && wordPlayCount == 2) || cycle > 1) return;
         }
         playingIndex++;
         if (playingIndex >= playingWords.length) playingIndex = 0;
@@ -421,7 +348,7 @@ void reloadStudy() {
         if (status != null) {
           studyService.addWordStudyRecord(startTime, endTime, player.playComplete, status);
         }
-        if (appService.autoPass == true) {
+        if (appService.autoPass) {
           var key = player.wordStatus?.word ?? "";
           var wordPlayCount = playCount[key] ?? 0;
           var cycle = player.wordStatus?.studyCycle ?? 0;
@@ -436,13 +363,39 @@ void reloadStudy() {
     playButtonEnable.value = true;
   }
 
+  Future<void> stopPlay() async {
+    if (!playButtonEnable.value) return;
+    thinking.value = false;
+    playButtonEnable.value = false;
+    player?.stop();
+    playing.value = false;
+    playButtonEnable.value = true;
+  }
+
   void next() async {
     if (!controlEnable.value) return;
     controlEnable.value = false;
     await stopPlay();
-    playingIndex++;
-    if (playingIndex >= playingWords.length) playingIndex = 0;
-    await startPlay();
+
+    if (isManualMode.value) {
+      if (playingIndex < playingWords.length - 1) {
+        playingIndex++;
+      } else {
+        var nextW = await studyService.fetchNextWord();
+        if (nextW != null) {
+          playingWords.add(nextW);
+          playingIndex++;
+        } else {
+          playingIndex++;
+        }
+      }
+      _loadManualWord();
+    } else {
+      playingIndex++;
+      if (playingIndex >= playingWords.length) playingIndex = 0;
+      await startPlay();
+    }
+
     await fetchCount();
     controlEnable.value = true;
   }
@@ -451,9 +404,20 @@ void reloadStudy() {
     if (!controlEnable.value) return;
     controlEnable.value = false;
     await stopPlay();
-    playingIndex--;
-    if (playingIndex < 0) playingIndex = max(playingWords.length - 1, 0);
-    await startPlay();
+
+    if (isManualMode.value) {
+      if (playingIndex > 0) {
+        playingIndex--;
+        _loadManualWord();
+      } else {
+        Get.snackbar("提示", "已经是本次学习的第一个词了");
+      }
+    } else {
+      playingIndex--;
+      if (playingIndex < 0) playingIndex = max(playingWords.length - 1, 0);
+      await startPlay();
+    }
+
     await fetchCount();
     controlEnable.value = true;
   }
@@ -462,39 +426,80 @@ void reloadStudy() {
     if (!controlEnable.value) return;
     controlEnable.value = false;
     await stopPlay();
-    var word = this.word.value?.wordId;
-    if (word != null) {
-      await studyService.pass(word);
+    var wId = word.value?.wordId;
+    if (wId != null) {
+      await studyService.pass(wId);
       sessionPassCount.value++;
     }
-    await fetchNextWord(playingIndex);
-    await startPlay();
-    await fetchCount();
-    controlEnable.value = true;
+
+    if (isManualMode.value) {
+      controlEnable.value = true;
+      next();
+    } else {
+      var nextW = await studyService.fetchNextWord();
+      if (nextW != null) {
+        playingWords[playingIndex] = nextW;
+        playingIndex++;
+        if (playingIndex >= playingWords.length) playingIndex = 0;
+      } else {
+        playingWords.removeAt(playingIndex);
+        if (playingWords.isEmpty) word.value = null;
+      }
+      await startPlay();
+      await fetchCount();
+      controlEnable.value = true;
+    }
   }
 
   void delete() async {
     if (!controlEnable.value) return;
     controlEnable.value = false;
     await stopPlay();
-    var word = this.word.value?.wordId;
-    if (word != null) {
-      await studyService.delete(word);
+    var wId = word.value?.wordId;
+    if (wId != null) await studyService.delete(wId);
+
+    if (isManualMode.value) {
+      controlEnable.value = true;
+      next();
+    } else {
+      var nextW = await studyService.fetchNextWord();
+      if (nextW != null) {
+        playingWords[playingIndex] = nextW;
+        playingIndex++;
+        if (playingIndex >= playingWords.length) playingIndex = 0;
+      } else {
+        playingWords.removeAt(playingIndex);
+        if (playingWords.isEmpty) word.value = null;
+      }
+      await startPlay();
+      await fetchCount();
+      controlEnable.value = true;
     }
-    await fetchNextWord(playingIndex);
-    await startPlay();
-    await fetchCount();
-    controlEnable.value = true;
   }
 
-  Future<void> deleteByWord(String? word) async {
-    var wordIndex = playingWords.indexWhere((element) => element.word == word);
+  Future<void> deleteByWord(String? w) async {
+    var wordIndex = playingWords.indexWhere((element) => element.word == w);
     if (wordIndex == -1) return;
-    await fetchNextWord(wordIndex);
+    if (isManualMode.value) {
+      playingWords.removeAt(wordIndex);
+      if (playingIndex >= playingWords.length) {
+        playingIndex = max(playingWords.length - 1, 0);
+      }
+      _loadManualWord();
+    } else {
+      var nextW = await studyService.fetchNextWord();
+      if (nextW != null) {
+        playingWords[wordIndex] = nextW;
+      } else {
+        playingWords.removeAt(wordIndex);
+        if (playingWords.isEmpty) word.value = null;
+      }
+    }
     await fetchCount();
   }
 
   void togglePlay() async {
+    if (isManualMode.value) return;
     if (playing.value) {
       await stopPlay();
     } else {
@@ -503,9 +508,9 @@ void reloadStudy() {
   }
 
   void fetchWordStatus() async {
-    var word = this.word.value;
-    if (word != null) {
-      wordStatus.value = await wordDao.queryWordStatus(word.wordId ?? "");
+    var w = word.value;
+    if (w != null) {
+      wordStatus.value = await wordDao.queryWordStatus(w.wordId ?? "");
     }
   }
 }

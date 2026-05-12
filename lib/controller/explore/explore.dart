@@ -174,18 +174,6 @@ class ExploreController extends GetxController {
 
   // 新增：专门处理系统词书的切换，并同步刷新首页
   void selectSystemBook(String bookName) {
-    appService.selectBook(bookName);
-    
-    // 强制刷新主页数据
-    if (Get.isRegistered<HomeControllerV2>()) {
-      Get.find<HomeControllerV2>().fetchInfo();
-    }
-    
-    // 通知框架切换回 首页(索引 0)
-    if (Get.isRegistered<MainController>()) {
-      Get.find<MainController>().changePage(0);
-    }
-    
-    Get.snackbar("切换成功", "已切换至系统词书《$bookName》");
+    appService.promptAndSelectBook(bookName);
   }
 }
