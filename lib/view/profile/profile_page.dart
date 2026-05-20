@@ -210,8 +210,12 @@ class ProfilePage extends GetView<ProfileController> {
               ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(30),
-                child: controller.avatarPath.value.isNotEmpty
-                    ? Image.file(File(controller.avatarPath.value), fit: BoxFit.cover)
+                child: (controller.avatarPath.value.isNotEmpty && File(controller.avatarPath.value).existsSync())
+                    ? Image.file(
+                        File(controller.avatarPath.value),
+                        fit: BoxFit.cover,
+                        errorBuilder: (context, error, stackTrace) => const Icon(Icons.broken_image, size: 45, color: Colors.white70),
+                      )
                     : const Icon(Icons.face_retouching_natural, size: 45, color: Colors.white),
               ),
             ),

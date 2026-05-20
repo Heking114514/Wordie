@@ -58,6 +58,8 @@ class HomeControllerV2 extends GetxController {
         dailyWord.value = WordVO(
           wordId: storage.read('daily_word_id') ?? '',
           word: word,
+          ukVoice: storage.read('daily_word_uk') ?? '',
+          usaVoice: storage.read('daily_word_us') ?? '',
           means: (storage.read('daily_word_means') as String? ?? '').split('\n'),
           sentence: storage.read('daily_word_sentence'),
           sentenceMeans: storage.read('daily_word_sentence_means'),
@@ -219,12 +221,12 @@ class HomeControllerV2 extends GetxController {
     if (book == null) return 0;
     int bId = int.tryParse(book.id ?? '0') ?? 0;
     if (bId == 0) return 0;
-    var count = await wordDao.queryAdapter.query(
-      'select count(distinct word.word) as count from word_status status left join word word on word.word = status.word where status.status=1 and word.book=?1',
-      mapper: (Map<String, Object?> row) => (row['count'] as int?) ?? 0,
-      arguments: [bId],
-    );
-    return count ?? 0;
+    var statuses = await wordDao.queryWordStatusByBook(bId);
+    int count = 0;
+    for (var s in statuses) {
+      if (s.status == 1) count++;
+    }
+    return count;
   }
 
   Widget _buildSettingRow(String title, int currentValue, List<int> options, Function(int) onChanged, bool isDark) {
@@ -264,21 +266,27 @@ class HomeControllerV2 extends GetxController {
       return;
     }
 
-    var allCount = await wordDao.queryWordCount(appService.bookId) ?? 0;
-    var progressCount = await wordDao.queryProgressWordCount(appService.bookId) ?? 0;
-    var dailyCount = await wordDao.queryDailyPassWordCount();
+    var book = appService.wordService.bookMap[appService.bookName];
+    var statuses = await wordDao.queryWordStatusByBook(appService.bookId);
+
+    int deleted = 0;
+    int learned = 0;
+    int reviewing = 0;
+    for (var s in statuses) {
+      if (s.status == -1) deleted++;
+      if (s.status != -1 && (s.status == 1 || (s.studyCycle ?? 0) > 0)) learned++;
+      if (s.status == 1) reviewing++;
+    }
+
+    int allCount = (book?.words?.length ?? 0) - deleted;
+    int progressCount = learned;
 
     progress.value = "$progressCount / $allCount";
     progressPercent.value = allCount > 0 ? progressCount / allCount : 0.0;
     if(progressPercent.value > 1.0) progressPercent.value = 1.0;
 
-    dailyWordCount.value = dailyCount ?? 0;
-    var rCount = await wordDao.queryAdapter.query(
-        'select count(distinct word.word) as count from word_status status left join word word on word.word = status.word where status.status=1 and word.book=?1',
-        mapper: (Map<String, Object?> row) => (row['count'] as int?) ?? 0,
-        arguments:[appService.bookId]
-    );
-    reviewCount.value = rCount ?? 0;
+    dailyWordCount.value = await wordDao.queryDailyPassWordCount() ?? 0;
+    reviewCount.value = reviewing;
     studyTime.value = ((await wordDao.queryStudyTime()) ?? 0) / 1000 / 60;
 
     calculateStreakDays();
@@ -358,6 +366,8 @@ class HomeControllerV2 extends GetxController {
         storage.write('daily_word_date', today);
         storage.write('daily_word_id', picked.wordId ?? '');
         storage.write('daily_word_word', picked.word ?? '');
+        storage.write('daily_word_uk', picked.ukVoice ?? '');
+        storage.write('daily_word_us', picked.usaVoice ?? '');
         storage.write('daily_word_means', (picked.means ?? []).join('\n'));
         storage.write('daily_word_sentence', picked.sentence ?? '');
         storage.write('daily_word_sentence_means', picked.sentenceMeans ?? '');

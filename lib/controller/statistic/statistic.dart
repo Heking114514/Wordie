@@ -20,7 +20,7 @@ class StatisticController extends GetxController {
 
   Future<void> fetchStats() async {
     // 1. 获取总学习时长
-    var timeMs = (await wordDao.queryStudyTime()) ?? 0;
+    var timeMs = (await wordDao.queryTotalStudyTime()) ?? 0;
     totalStudyTime.value = timeMs ~/ (1000 * 60);
 
     // 2. 获取自定义单词书数量

@@ -112,7 +112,10 @@ class ExplorePage extends GetView<ExploreController> {
             const SizedBox(height: 12),
             Text(name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: isDark ? Colors.white : const Color(0xFF1E293B))),
             const SizedBox(height: 4),
-            Text("$wordCount 词汇", style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B))),
+            Obx(() => Text(
+              "${controller.validWordCounts[name] ?? wordCount} 词汇",
+              style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B)),
+            )),
           ],
         ),
       ),

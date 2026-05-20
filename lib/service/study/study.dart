@@ -27,12 +27,21 @@ class StudyService {
       String savedDate = GetStorage().read('review_date_${appService.bookId}') ?? '';
 
       if (savedDate != today) {
-        var dailyBatch = await wordDao.queryAdapter.queryList(
-          'select word.* from word_status status left join word word on word.word = status.word where status.status = 1 and word.book=?1 group by word.word order by status.updateTime ASC limit ?2',
-          mapper: (Map<String, Object?> row) => WordPO(id: row['id'] as int?, word: row['word'] as String?, book: row['book'] as String?),
-          arguments: [appService.bookId, appService.reviewDailyCount]
+        String prefix = "${appService.bookId}_%";
+        var statuses = await wordDao.queryAdapter.queryList(
+          'select * from word_status where status = 1 and word like ?1',
+          mapper: (Map<String, Object?> row) => WordStatusPO(word: row['word'] as String?),
+          arguments: [prefix]
         );
+        List<WordPO> dailyBatch = statuses.map((s) {
+          var wordText = s.word!.split('_').sublist(1).join('_');
+          return WordPO(id: 0, word: wordText, book: appService.bookId.toString());
+        }).toList();
+
         dailyBatch.shuffle();
+        int target = appService.reviewDailyCount;
+        dailyBatch = dailyBatch.take(target).toList();
+
         _reviewBatch = dailyBatch.map((e) => toWord(e)).whereType<WordVO>().toList();
 
         List<String> ids = _reviewBatch.map((e) => e.wordId!).toList();
@@ -63,55 +72,55 @@ class StudyService {
       bool isAsc = orderPref.contains('ASC');
       bool isDesc = orderPref.contains('DESC');
 
-      var studyingPOs = await wordDao.queryAdapter.queryList(
-        'select word.* from word_status status left join word word on word.word = status.word where status.status = 0 and word.book = ?1 group by word.word',
-        mapper: (Map<String, Object?> row) => WordPO(id: row['id'] as int?, word: row['word'] as String?, book: row['book'] as String?),
-        arguments: [appService.bookId]
-      );
+      var allBookWords = await wordDao.queryWords(appService.bookId);
+      var statusMap = await fetchBookWordStatusMap();
 
-      List<WordVO> batch = [];
-      for (var po in studyingPOs) {
-        var vo = toWord(po);
-        if (vo != null) batch.add(vo);
+      List<WordVO> studyingBatch = [];
+      List<WordVO> unstudiedBatch = [];
+
+      for (var po in allBookWords) {
+        var status = statusMap[po.word];
+        if (status == null) {
+           var vo = toWord(po);
+           if (vo != null) unstudiedBatch.add(vo);
+        } else if (status.status == 0) {
+           var vo = toWord(po);
+           if (vo != null) studyingBatch.add(vo);
+        }
       }
 
-      if (batch.length < studyQueueMaxCount) {
-        var unstudiedPOs = await wordDao.queryAllNotStudyWords(appService.bookId);
-        List<WordVO> allUnstudied = [];
-        for (var po in unstudiedPOs) {
-          var vo = toWord(po);
-          if (vo != null) allUnstudied.add(vo);
-        }
+      List<WordVO> batch = List.from(studyingBatch);
 
+      if (batch.length < studyQueueMaxCount) {
         if (isAsc) {
           String cursor = GetStorage().read('study_cursor_${appService.bookId}') ?? '';
-          var filtered = allUnstudied.where((w) => (w.word ?? '').compareTo(cursor) > 0).toList();
-          if (filtered.isEmpty && allUnstudied.isNotEmpty) {
+          var filtered = unstudiedBatch.where((w) => (w.word ?? '').compareTo(cursor) > 0).toList();
+          if (filtered.isEmpty && unstudiedBatch.isNotEmpty) {
             cursor = '';
             GetStorage().write('study_cursor_${appService.bookId}', '');
-            filtered = allUnstudied;
+            filtered = unstudiedBatch;
           }
           filtered.sort((a, b) => (a.word ?? '').compareTo(b.word ?? ''));
-          allUnstudied = filtered;
+          unstudiedBatch = filtered;
         } else if (isDesc) {
           String cursor = GetStorage().read('study_cursor_desc_${appService.bookId}') ?? '';
-          var filtered = allUnstudied.where((w) {
+          var filtered = unstudiedBatch.where((w) {
             if (cursor.isEmpty) return true;
             return (w.word ?? '').compareTo(cursor) < 0;
           }).toList();
-          if (filtered.isEmpty && allUnstudied.isNotEmpty) {
+          if (filtered.isEmpty && unstudiedBatch.isNotEmpty) {
             cursor = '';
             GetStorage().write('study_cursor_desc_${appService.bookId}', '');
-            filtered = allUnstudied;
+            filtered = unstudiedBatch;
           }
           filtered.sort((a, b) => (b.word ?? '').compareTo(a.word ?? ''));
-          allUnstudied = filtered;
+          unstudiedBatch = filtered;
         } else {
-          allUnstudied.shuffle();
+          unstudiedBatch.shuffle();
         }
 
         var needed = studyQueueMaxCount - batch.length;
-        var toAdd = allUnstudied.take(needed).toList();
+        var toAdd = unstudiedBatch.take(needed).toList();
         batch.addAll(toAdd);
 
         for (var word in toAdd) {
@@ -154,13 +163,15 @@ class StudyService {
       bool isAsc = orderPref.contains('ASC');
       bool isDesc = orderPref.contains('DESC');
 
-      var allUnstudiedPOs = await wordDao.queryAllNotStudyWords(appService.bookId);
-      if (allUnstudiedPOs.isEmpty) return null;
+      var allBookWords = await wordDao.queryWords(appService.bookId);
+      var statusMap = await fetchBookWordStatusMap();
 
       List<WordVO> allUnstudied = [];
-      for (var po in allUnstudiedPOs) {
-        var vo = toWord(po);
-        if (vo != null) allUnstudied.add(vo);
+      for (var po in allBookWords) {
+        if (!statusMap.containsKey(po.word)) {
+           var vo = toWord(po);
+           if (vo != null) allUnstudied.add(vo);
+        }
       }
 
       if (isAsc) {
@@ -222,17 +233,19 @@ class StudyService {
     String mode = Get.parameters['mode'] ?? 'new';
 
     if (mode == 'review') {
-      var reviewPOs = await wordDao.queryAdapter.queryList(
-        '''select word.* from word_status status
-           inner join word word on word.word = status.word
-           where status.status = 1 and word.book = ?1
-           group by word.word
-           order by status.updateTime ASC''',
-        mapper: (Map<String, Object?> row) => WordPO(id: row['id'] as int?, word: row['word'] as String?, book: row['book'] as String?),
-        arguments: [appService.bookId],
+      String prefix = "${appService.bookId}_%";
+      var statuses = await wordDao.queryAdapter.queryList(
+        'select * from word_status where status = 1 and word like ?1 order by updateTime ASC',
+        mapper: (Map<String, Object?> row) => WordStatusPO(
+          word: row['word'] as String?,
+          status: row['status'] as int?,
+        ),
+        arguments: [prefix]
       );
       List<WordVO> result = [];
-      for (var po in reviewPOs) {
+      for (var s in statuses) {
+        var wordText = s.word!.split('_').sublist(1).join('_');
+        var po = WordPO(id: 0, word: wordText, book: appService.bookId.toString());
         var vo = toWord(po);
         if (vo != null) result.add(vo);
       }
@@ -243,10 +256,15 @@ class StudyService {
       bool isAsc = orderPref.contains('ASC');
       bool isDesc = orderPref.contains('DESC');
 
-      var wordIds = await wordDao.queryBookNotDeleteWord(appService.bookId);
+      var allBookWords = await wordDao.queryWords(appService.bookId);
+      var statusMap = await fetchBookWordStatusMap();
+
       List<WordVO> result = [];
-      for (var id in wordIds) {
-        var wordData = appService.getWord(id);
+      for (var po in allBookWords) {
+        var status = statusMap[po.word];
+        if (status != null && status.status == -1) continue;
+
+        var wordData = appService.getWord(po.word);
         if (wordData != null) {
           var vo = appService.toWordVO(wordData);
           if (vo != null) result.add(vo);
@@ -269,12 +287,13 @@ class StudyService {
     List<String> roundDone = roundDoneRaw != null
         ? List<String>.from(roundDoneRaw is List ? roundDoneRaw : [])
         : [];
-    var totalReview = await wordDao.queryAdapter.query(
-      'select count(distinct word.word) as count from word_status status inner join word word on word.word = status.word where status.status=1 and word.book=?1',
-      mapper: (Map<String, Object?> row) => (row['count'] as int?) ?? 0,
-      arguments: [appService.bookId],
+    String prefix = "${appService.bookId}_%";
+    var statuses = await wordDao.queryAdapter.queryList(
+      'select * from word_status where status = 1 and word like ?1',
+      mapper: (Map<String, Object?> row) => WordStatusPO(word: row['word'] as String?),
+      arguments: [prefix]
     );
-    return (totalReview ?? 0) - roundDone.length;
+    return statuses.length - roundDone.length;
   }
 
   Future<List<WordVO>> createReviewBatch(int targetCount, int cycles) async {
@@ -283,27 +302,24 @@ class StudyService {
     List<String> roundDone = roundDoneRaw != null
         ? List<String>.from(roundDoneRaw is List ? roundDoneRaw : [])
         : [];
-    var totalReview = await wordDao.queryAdapter.query(
-      'select count(distinct word.word) as count from word_status status inner join word word on word.word = status.word where status.status=1 and word.book=?1',
-      mapper: (Map<String, Object?> row) => (row['count'] as int?) ?? 0,
-      arguments: [appService.bookId],
+
+    String prefix = "${appService.bookId}_%";
+    var statuses = await wordDao.queryAdapter.queryList(
+      'select * from word_status where status = 1 and word like ?1 order by updateTime ASC',
+      mapper: (Map<String, Object?> row) => WordStatusPO(word: row['word'] as String?),
+      arguments: [prefix]
     );
-    if (roundDone.length >= (totalReview ?? 0)) {
+
+    if (roundDone.length >= statuses.length) {
       roundDone.clear();
       GetStorage().write('review_round_done_${appService.bookId}', roundDone);
     }
 
-    var reviewPOs = await wordDao.queryAdapter.queryList(
-      '''select word.* from word_status status
-         inner join word word on word.word = status.word
-         where status.status = 1 and word.book = ?1
-         group by word.word
-         order by status.updateTime ASC''',
-      mapper: (Map<String, Object?> row) => WordPO(id: row['id'] as int?, word: row['word'] as String?, book: row['book'] as String?),
-      arguments: [appService.bookId],
-    );
+    var available = statuses.where((s) {
+      var w = s.word!.split('_').sublist(1).join('_');
+      return !roundDone.contains(w);
+    }).toList();
 
-    var available = reviewPOs.where((po) => !roundDone.contains(po.word)).toList();
     if (available.isEmpty) return [];
 
     available.shuffle();
@@ -313,7 +329,9 @@ class StudyService {
     List<WordVO> batch = [];
     for (int c = 0; c < cycles; c++) {
       selected.shuffle();
-      for (var po in selected) {
+      for (var s in selected) {
+        var wordText = s.word!.split('_').sublist(1).join('_');
+        var po = WordPO(id: 0, word: wordText, book: appService.bookId.toString());
         var vo = toWord(po);
         if (vo != null) batch.add(vo);
       }
@@ -323,7 +341,9 @@ class StudyService {
         batch.map((e) => e.wordId).toList());
     GetStorage().write('review_batch_pos_${appService.bookId}', 0);
     GetStorage().write('review_batch_selected_${appService.bookId}',
-        selected.map((e) => e.word).toList());
+        selected.map((e) {
+      return e.word!.split('_').sublist(1).join('_');
+    }).toList());
     return batch;
   }
 
@@ -331,16 +351,24 @@ class StudyService {
     var statuses = await wordDao.queryWordStatusByBook(appService.bookId);
     Map<String, WordStatusPO?> map = {};
     for (var s in statuses) {
-      if (s.word != null) map[s.word!] = s;
+      if (s.word != null) {
+        var parts = s.word!.split('_');
+        if (parts.length > 1) {
+          map[parts.sublist(1).join('_')] = s;
+        } else {
+          map[s.word!] = s;
+        }
+      }
     }
     return map;
   }
 
   Future<void> _markWordAsStudying(String? wordId) async {
-    var existing = await wordDao.queryWordStatus(wordId ?? '');
+    String wordKey = "${appService.bookId}_$wordId";
+    var existing = await wordDao.queryWordStatus(wordKey);
     if (existing == null) {
       await wordDao.createWordStatus(WordStatusPO(
-        word: wordId, status: 0, studyCycle: 0, nextReviewTime: 0,
+        word: wordKey, status: 0, studyCycle: 0, nextReviewTime: 0,
         createTime: DateTime.now().millisecondsSinceEpoch, updateTime: DateTime.now().millisecondsSinceEpoch,
       ));
     } else {
@@ -350,8 +378,14 @@ class StudyService {
   }
 
   Future<void> pass(String word) async {
-    var status = await wordDao.queryWordStatus(word);
-    if (status != null) {
+    String wordKey = "${appService.bookId}_$word";
+    var status = await wordDao.queryWordStatus(wordKey);
+    if (status == null) {
+      await wordDao.createWordStatus(WordStatusPO(
+        word: wordKey, status: 1, studyCycle: 1, nextReviewTime: 0,
+        createTime: DateTime.now().millisecondsSinceEpoch, updateTime: DateTime.now().millisecondsSinceEpoch,
+      ));
+    } else {
       status.status = 1;
       status.studyCycle = (status.studyCycle ?? 0) + 1;
       status.nextReviewTime = 0;
@@ -361,8 +395,14 @@ class StudyService {
   }
 
   Future<void> delete(String word) async {
-    var status = await wordDao.queryWordStatus(word);
-    if (status != null) {
+    String wordKey = "${appService.bookId}_$word";
+    var status = await wordDao.queryWordStatus(wordKey);
+    if (status == null) {
+      await wordDao.createWordStatus(WordStatusPO(
+        word: wordKey, status: -1, studyCycle: 0, nextReviewTime: 0,
+        createTime: DateTime.now().millisecondsSinceEpoch, updateTime: DateTime.now().millisecondsSinceEpoch,
+      ));
+    } else {
       status.status = -1;
       status.updateTime = DateTime.now().millisecondsSinceEpoch;
       await wordDao.updateStatus(status);

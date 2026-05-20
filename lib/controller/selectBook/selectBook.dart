@@ -14,6 +14,7 @@ import '../../controller/main/main_controller.dart';
 class SelectBookController extends GetxController {
   AppService appService = Get.find();
   var rxBookNames = <String>[].obs;
+  var validWordCounts = <String, int>{}.obs;
 
   @override
   void onInit() {
@@ -21,8 +22,25 @@ class SelectBookController extends GetxController {
     refreshBooks();
   }
 
-  void refreshBooks() {
+  void refreshBooks() async {
     rxBookNames.value = List.from(appService.wordService.bookNames);
+    var wordDao = Get.find<WordDao>();
+    var allNames = [...appService.wordService.systemBookNames, ...appService.wordService.customBookNames];
+
+    var deletedStatuses = await wordDao.queryAdapter.queryList(
+      'SELECT word FROM word_status WHERE status = -1',
+      mapper: (Map<String, Object?> row) => row['word'] as String,
+    );
+    Set<String> deletedWords = deletedStatuses.where((w) => w.contains('_')).toSet();
+
+    for (var name in allNames) {
+      var book = appService.wordService.bookMap[name];
+      if (book != null && book.words != null) {
+        int validCount = book.words!.where((w) => w.id != null && !deletedWords.contains("${book.id}_${w.id}")).length;
+        validWordCounts[name] = validCount;
+      }
+    }
+    validWordCounts.refresh();
   }
 
   get bookCount => rxBookNames.length;
@@ -76,6 +94,14 @@ class SelectBookController extends GetxController {
             ),
             Divider(color: isDark ? Colors.white24 : Colors.black26),
             ListTile(
+              leading: const Icon(Icons.file_copy, color: Colors.teal),
+              title: Text("导出顽固词汇为新词书", style: TextStyle(color: isDark ? Colors.white : Colors.black)),
+              onTap: () {
+                Get.back();
+                _exportDifficultBook(context, isDark);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.search, color: Colors.blue),
               title: Text("搜索本书单词", style: TextStyle(color: isDark ? Colors.white : Colors.black)),
               onTap: () {
@@ -107,6 +133,74 @@ class SelectBookController extends GetxController {
         ),
       ),
       isScrollControlled: true,
+    );
+  }
+
+  void _exportDifficultBook(BuildContext context, bool isDark) async {
+    var storage = GetStorage();
+    List<String> difficultWords = appService.wordService.getDifficultWords();
+    Map<String, dynamic> customData = storage.read('custom_books') ?? {};
+
+    if (difficultWords.isEmpty) {
+      Get.snackbar("提示", "顽固词汇为空，去学习界面添加吧");
+      return;
+    }
+
+    TextEditingController nameController = TextEditingController(text: "顽固词汇导出");
+    Get.bottomSheet(
+      Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1E293B) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text("导出顽固词汇", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
+            const SizedBox(height: 12),
+            Text("共 ${difficultWords.length} 个词", style: TextStyle(color: Colors.grey, fontSize: 13)),
+            const SizedBox(height: 16),
+            TextField(
+              controller: nameController,
+              style: TextStyle(color: isDark ? Colors.white : Colors.black),
+              decoration: InputDecoration(
+                labelText: "新词书名称",
+                labelStyle: const TextStyle(color: Colors.grey),
+                fillColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
+                filled: true,
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF407BFF),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: () async {
+                  Get.back();
+                  String newName = nameController.text.trim();
+                  if (newName.isEmpty) newName = "顽固词汇导出";
+                  if (customData.containsKey(newName)) {
+                    Get.snackbar("提示", "《$newName》已存在");
+                    return;
+                  }
+                  await appService.wordService.addCustomBook(newName, difficultWords);
+                  await appService.insertCustomBookToDb(newName);
+                  refreshBooks();
+                  Get.snackbar("导出成功", "顽固词汇已导出为《$newName》");
+                },
+                child: const Text("确认导出", style: TextStyle(color: Colors.white, fontSize: 16)),
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
     );
   }
 
@@ -364,7 +458,7 @@ class SelectBookController extends GetxController {
   // 1. 先进行初步处理：拆分、去空格、转小写、过滤空行
   var rawList = rawText.split(RegExp(r'[\r\n,]+'))
       .map((e) => e.trim().toLowerCase())
-      .where((e) => e.isNotEmpty);
+      .where((e) => e.isNotEmpty && RegExp(r'[a-z]').hasMatch(e));
 
   // 2. 使用 Set 强制去重，并转换成 List
   List<String> spells = rawList.toSet().toList();

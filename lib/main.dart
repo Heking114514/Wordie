@@ -34,6 +34,27 @@ void main() async {
 
   var appDatabase = await $FloorAppDatabase.databaseBuilder("english.db").build();
 
+  // 自动迁移旧版进度数据（使用极其高效的 JOIN 查询，避免应用假死）
+  try {
+    var db = appDatabase.database;
+    var rows = await db.rawQuery(
+      "SELECT s.id, w.book, s.word FROM word_status s INNER JOIN word w ON w.word = s.word WHERE INSTR(s.word, '_') = 0"
+    );
+    if (rows.isNotEmpty) {
+      var batch = db.batch();
+      for (var row in rows) {
+        batch.rawUpdate(
+          "UPDATE word_status SET word = ? WHERE id = ?",
+          ["${row['book']}_${row['word']}", row['id']]
+        );
+      }
+      await batch.commit(noResult: true);
+      print('Migration successful: ${rows.length} records updated.');
+    }
+  } catch (e) {
+    print('Migration error: $e');
+  }
+
   Get.put(appDatabase);
   Get.put(appDatabase.wordDao);
   Get.put(WordService());

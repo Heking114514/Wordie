@@ -2,6 +2,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:get_storage/get_storage.dart';
 import 'package:file_picker/file_picker.dart';
 import '../../service/app/app.dart';
 import '../../util/dictionary.dart';
@@ -48,10 +49,17 @@ class ImportController extends GetxController {
 
     Get.dialog(const Center(child: CircularProgressIndicator()), barrierDismissible: false);
 
+    var storage = GetStorage();
+    Map<String, dynamic> customData = storage.read('custom_books') ?? {};
+    List<String> words = List<String>.from(customData["raw words"] ?? []);
+    bool changed = false;
     int fetched = 0;
-    for (var w in pendingWords) {
-      await appService.wordService.addWordToRawLibrary(w);
 
+    for (var w in pendingWords) {
+      if (!words.contains(w)) {
+        words.add(w);
+        changed = true;
+      }
       if (appService.getWordBySpell(w) == null) {
         final word = await fetchWordDefinition(w);
         if (word != null) {
@@ -61,13 +69,19 @@ class ImportController extends GetxController {
       }
     }
 
-    if (fetched > 0) {
+    if (changed) {
+      words.sort();
+      customData["raw words"] = words;
+      await storage.write('custom_books', customData);
+      if (storage.read('book_id_raw words') == null) {
+        await storage.write('book_id_raw words', "1001");
+      }
       await appService.wordService.loadCustomBooks();
+      await appService.insertCustomBookToDb("raw words");
     }
-    await appService.insertCustomBookToDb("raw words");
 
-    Get.back(); // loading
-    Get.back(); // page
+    Get.back();
+    Get.back();
     Get.snackbar("成功", "已导入 ${pendingWords.length} 个单词" + (fetched > 0 ? "（其中 $fetched 个从网络获取释义）" : ""));
   }
 }

@@ -76,20 +76,24 @@ Future<Duration?> playSentenceSound(
   int type = 2,
   String le = "eng",
 }) async {
-  sentence = sentence ?? "";
-  sentence = sentence.replaceAll("</b>", "");
-  sentence = sentence.replaceAll("<b>", "");
-  sentence = Uri.encodeComponent(sentence);
-  cacheName ??= sentence;
-  var url =
-      "https://dict.youdao.com/dictvoice?audio=$sentence&type=$type&le=$le";
-  var tempDir = await getApplicationSupportDirectory();
-  Directory("${tempDir.path}/sentenceVoice").createSync();
-  var file = File("${tempDir.path}/sentenceVoice/${cacheName}_$type.mp3");
-  if (!file.existsSync()) {
-    await Dio().download(url, file.path);
+  try {
+    sentence = sentence ?? "";
+    sentence = sentence.replaceAll("</b>", "");
+    sentence = sentence.replaceAll("<b>", "");
+    sentence = Uri.encodeComponent(sentence);
+    cacheName ??= sentence;
+    var url =
+        "https://dict.youdao.com/dictvoice?audio=$sentence&type=$type&le=$le";
+    var tempDir = await getApplicationSupportDirectory();
+    Directory("${tempDir.path}/sentenceVoice").createSync();
+    var file = File("${tempDir.path}/sentenceVoice/${cacheName}_$type.mp3");
+    if (!file.existsSync()) {
+      await Dio().download(url, file.path);
+    }
+    await player.play(DeviceFileSource(file.path));
+  } catch (e) {
+    print('[AUDIO ERROR] 播放发音失败，可能是网络断开: $e');
   }
-  await player.play(DeviceFileSource(file.path));
   return null;
 }
 

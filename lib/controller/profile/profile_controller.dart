@@ -420,7 +420,7 @@ class ProfileController extends GetxController {
       onConfirm: () async {
         Get.back();
         // 清理进度表
-        await wordDao.queryAdapter.queryNoReturn('DELETE FROM word_status');
+        await wordDao.queryAdapter.queryNoReturn('DELETE FROM word_status WHERE status != -1');
         // 清理总学习时长表
         await wordDao.queryAdapter.queryNoReturn('DELETE FROM study_time_count');
         // 清理单词个体学习时长表

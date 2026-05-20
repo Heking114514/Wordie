@@ -16,6 +16,8 @@ import 'package:modal_bottom_sheet/modal_bottom_sheet.dart';
 import 'package:sliding_sheet/sliding_sheet.dart';
 
 import '../../controller/study/study.dart';
+import '../../controller/home/home_v2.dart';
+import '../../controller/statistic/statistic.dart';
 import '../../util/theme.dart';
 import '../word/word.dart';
 
@@ -67,18 +69,38 @@ Widget _buildOptionTile(String title, String value) {
 
   @override
   Widget build(BuildContext context) {
-    // Scaffold 自动读取 main.dart 中注入的 ThemeData，无需再写死颜色！
-    return Scaffold(
+    return WillPopScope(
+      onWillPop: () async {
+        if (controller.isDifficultMode.value) {
+          controller.exitDifficultMode();
+          return false;
+        }
+        if (Get.isRegistered<HomeControllerV2>()) Get.find<HomeControllerV2>().fetchInfo();
+        if (Get.isRegistered<StatisticController>()) Get.find<StatisticController>().fetchStats();
+        return true;
+      },
+      child: Scaffold(
       appBar: AppBar(
         titleSpacing: 0,
         leading: IconButton(
-          onPressed: () => Get.back(),
+          onPressed: () {
+            if (controller.isDifficultMode.value) {
+              controller.exitDifficultMode();
+            } else {
+              if (Get.isRegistered<HomeControllerV2>()) Get.find<HomeControllerV2>().fetchInfo();
+              if (Get.isRegistered<StatisticController>()) Get.find<StatisticController>().fetchStats();
+              Get.back();
+            }
+          },
           icon: const Icon(Icons.arrow_back_ios),
         ),
-        title: const Text("学习", style: TextStyle(fontSize: 20)),
+        title: Obx(() => Text(
+          controller.isDifficultMode.value ? "🔥 攻克顽固词汇" : "学习",
+          style: const TextStyle(fontSize: 20),
+        )),
         centerTitle: true,
         elevation: 0,
-        backgroundColor: Colors.transparent, // 变透明，融合背景
+        backgroundColor: Colors.transparent,
       ),
       body: SafeArea(
         child: Obx(() {
@@ -168,33 +190,69 @@ Widget _buildOptionTile(String title, String value) {
                     ),
                   Align(
                     alignment: Alignment.centerRight,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10.0),
-                      child: IconButton(
-                        onPressed: controller.isManualMode.value
-                            ? () => controller.jumpToLearningPosition()
-                            : () => showOptions(context),
-                        icon: Icon(
-                          controller.isManualMode.value ? Icons.flag_rounded : Icons.av_timer,
-                          size: 32,
-                          color: controller.isManualMode.value ? Colors.blueAccent : null,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (controller.isDifficultMode.value)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                            child: IconButton(
+                              onPressed: () => controller.exitDifficultMode(),
+                              icon: const Icon(Icons.logout_rounded, size: 28),
+                              color: Colors.redAccent,
+                              tooltip: "退出顽固词汇",
+                            ),
+                          ),
+                        if (controller.isManualMode.value && !controller.isDifficultMode.value)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                            child: IconButton(
+                              onPressed: () => controller.openDifficultBook(),
+                              icon: const Icon(Icons.menu_book, size: 28),
+                              color: Colors.teal,
+                              tooltip: "顽固词汇",
+                            ),
+                          ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                          child: IconButton(
+                            onPressed: controller.isManualMode.value
+                                ? () => controller.jumpToLearningPosition()
+                                : () => showOptions(context),
+                            icon: Icon(
+                              controller.isManualMode.value ? Icons.flag_rounded : Icons.av_timer,
+                              size: 28,
+                              color: controller.isManualMode.value ? Colors.blueAccent : null,
+                            ),
+                            tooltip: controller.isManualMode.value ? "跳转到学习位置" : null,
+                          ),
                         ),
-                        tooltip: controller.isManualMode.value ? "跳转到学习位置" : null,
-                      ),
+                      ],
                     ),
                   ),
                   Align(
                     alignment: Alignment.centerLeft,
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10.0),
-                      child: IconButton(
-                          onPressed: () {
-                            showWordListBottomSheet(context);
-                          },
-                          icon: Icon(
-                            Icons.list,
-                            size: 32,
-                          )),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                          child: IconButton(
+                            onPressed: () => showWordListBottomSheet(context),
+                            icon: const Icon(Icons.list, size: 28),
+                          ),
+                        ),
+                        if (controller.isManualMode.value && !controller.isDifficultMode.value)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                            child: IconButton(
+                              onPressed: () => controller.addToDifficult(),
+                              icon: const Icon(Icons.add_circle_outline, size: 28),
+                              color: Colors.orange,
+                              tooltip: "加入顽固词汇",
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ],
@@ -202,6 +260,7 @@ Widget _buildOptionTile(String title, String value) {
             }),
           ),
         ),
+      ),
       ),
     );
   }
@@ -323,32 +382,28 @@ Widget _buildOptionTile(String title, String value) {
               if (controller.isManualMode.value && !controller.isRevealed.value) return const SizedBox();
 
               return Container(
-                margin: const EdgeInsets.symmetric(vertical: 20.0, horizontal: 20),
-                width: 36,
-                height: 36,
-                child: Ink(
-                  decoration: BoxDecoration(
-                    color: isDark ? const Color(0xFF1E293B) : Colors.white,
-                    borderRadius: BorderRadius.circular(100),
-                    boxShadow: [
-                      BoxShadow(
-                        blurStyle: BlurStyle.outer,
-                        blurRadius: 10,
-                        color: isDark ? Colors.red.withOpacity(0.4) : Colors.red.withOpacity(0.2),
-                      )
-                    ],
-                  ),
-                  child: InkWell(
-                      borderRadius: BorderRadius.circular(100),
-                      onTap: controller.controlEnable.value && controller.thinking.value == false
-                          ? () => controller.delete()
-                          : null,
-                      child: Container(
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 24),
-                      )),
-                ),
-              );
+                margin: const EdgeInsets.only(top: 20, right: 20),
+                width: 36, height: 36,
+                    child: Ink(
+                      decoration: BoxDecoration(
+                        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+                        borderRadius: BorderRadius.circular(100),
+                        boxShadow: [
+                          BoxShadow(blurStyle: BlurStyle.outer, blurRadius: 10,
+                            color: isDark ? Colors.red.withOpacity(0.4) : Colors.red.withOpacity(0.2)),
+                        ],
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(100),
+                        onTap: controller.controlEnable.value && controller.thinking.value == false
+                            ? () => controller.delete()
+                            : null,
+                        child: Container(
+                          alignment: Alignment.center,
+                          child: const Icon(Icons.delete_outline_rounded, color: Colors.red, size: 24),
+                        ),
+                      ),
+                    ));
             }),
           ),
 
@@ -356,36 +411,46 @@ Widget _buildOptionTile(String title, String value) {
           alignment: Alignment.bottomLeft,
           child: Container(
             padding: const EdgeInsets.all(10),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  Get.parameters['mode'] == 'review' ? "本批已复习: " : "已学习: ",
-                  style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
-                ),
-                Obx(() => Text(
-                  Get.parameters['mode'] == 'review'
-                      ? "${controller.sessionPassCount.value}"
-                      : "${controller.bookLearnedCount.value}",
-                  style: TextStyle(color: isDark ? Colors.greenAccent.withOpacity(0.8) : Colors.green.withOpacity(0.8), fontSize: 12),
-                )),
-                Text(
-                  Get.parameters['mode'] == 'review' ? "    批次进度: " : "    本书词汇: ",
-                  style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12),
-                ),
-                Obx(() => Text(
-                  Get.parameters['mode'] == 'review'
-                      ? "${controller.playingIndex + 1}/${controller.reviewCount.value}"
-                      : "${controller.bookTotalCount.value}",
-                  style: TextStyle(color: isDark ? Colors.redAccent.shade100 : Colors.redAccent.withOpacity(0.8), fontSize: 12),
-                )),
-                if (controller.isManualMode.value && Get.parameters['mode'] != 'review')
-                  Text(
-                    "  位置: ${controller.playingIndex + 1}/${controller.playingWords.length}",
-                    style: TextStyle(color: isDark ? Colors.white38 : Colors.grey.withOpacity(0.6), fontSize: 12),
-                  ),
-              ],
-            ),
+            child: Obx(() {
+              // 强制绑定依赖：只要 word.value（切词时）改变，Obx就会触发刷新，修复 improper use 异常
+              final _ = controller.word.value;
+
+              if (Get.parameters['mode'] == 'review') {
+                int uniqueCount = controller.playingWords.map((e) => e.wordId).toSet().length;
+                int m = controller.playingWords.length;
+                int n = controller.playingIndex + 1;
+                int round = (controller.playingIndex ~/ (uniqueCount > 0 ? uniqueCount : 1)) + 1;
+                // 改用 Wrap 代替 Row，修复文字超长导致的 RenderFlex overflow 溢出崩溃
+                return Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text("本批复习: $uniqueCount  ", style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12)),
+                    Text("第$round轮  ", style: TextStyle(color: isDark ? Colors.orangeAccent : Colors.orange, fontSize: 12)),
+                    Text("进度: $n/$m", style: TextStyle(color: isDark ? Colors.greenAccent : Colors.green, fontSize: 12)),
+                  ],
+                );
+              } else if (controller.isDifficultMode.value) {
+                return Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text("🔥 顽固词汇: ", style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12)),
+                    Text("${controller.playingWords.length}", style: TextStyle(color: isDark ? Colors.greenAccent.withOpacity(0.8) : Colors.green.withOpacity(0.8), fontSize: 12)),
+                  ],
+                );
+              } else {
+                return Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text("已学习: ", style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12)),
+                    Text("${controller.bookLearnedCount.value}  ", style: TextStyle(color: isDark ? Colors.greenAccent.withOpacity(0.8) : Colors.green.withOpacity(0.8), fontSize: 12)),
+                    Text("本书词汇: ", style: TextStyle(color: isDark ? Colors.white54 : Colors.grey.withOpacity(0.8), fontSize: 12)),
+                    Text("${controller.bookTotalCount.value}", style: TextStyle(color: isDark ? Colors.redAccent.shade100 : Colors.redAccent.withOpacity(0.8), fontSize: 12)),
+                    if (controller.isManualMode.value)
+                      Text("  位置: ${controller.playingIndex + 1}/${controller.playingWords.length}", style: TextStyle(color: isDark ? Colors.white38 : Colors.grey.withOpacity(0.6), fontSize: 12)),
+                  ],
+                );
+              }
+            }),
           ),
         ),
 
@@ -409,6 +474,28 @@ Widget _buildOptionTile(String title, String value) {
    Widget buildEndView(BuildContext context) {
     bool isDark = Theme.of(context).brightness == Brightness.dark;
     String mode = Get.parameters['mode'] ?? 'new';
+
+    if (controller.isDifficultMode.value) {
+      return Container(
+        width: double.infinity,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children:[
+            const Icon(Icons.local_fire_department_rounded, size: 80, color: Colors.orangeAccent),
+            const SizedBox(height: 24),
+            Text("太棒了！", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black87)),
+            const SizedBox(height: 12),
+            Text("当前的顽固词汇已被你全部消灭", style: TextStyle(fontSize: 14, color: isDark ? Colors.white54 : Colors.black54)),
+            const SizedBox(height: 40),
+            ElevatedButton(
+              onPressed: () => controller.exitDifficultMode(),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.orangeAccent, foregroundColor: Colors.white),
+              child: const Text("返回继续主线学习"),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Container(
       width: double.infinity,
@@ -1222,6 +1309,7 @@ class WordListView extends GetView<WordListController> {
         ),
         Expanded(
           child: Material(
+            color: Theme.of(context).scaffoldBackgroundColor,
             borderRadius: const BorderRadius.only(
               topLeft: Radius.circular(20),
               topRight: Radius.circular(20),
@@ -1426,9 +1514,9 @@ class WordListView extends GetView<WordListController> {
                 builder: (context) {
                   return Container(
                       height: MediaQuery.of(context).size.height * 4 / 5,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.only(
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        borderRadius: const BorderRadius.only(
                             topLeft: Radius.circular(20),
                             topRight: Radius.circular(20)),
                       ),

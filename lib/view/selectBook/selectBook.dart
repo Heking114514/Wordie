@@ -96,10 +96,13 @@ class SelectBookPage extends GetView<SelectBookController> {
                   children: [
                     Expanded(
                       child: FittedBox(
-                        child: BookImage(
-                          title: "自建", subTitle: name, color: Colors.blueGrey, fontColor: Colors.white,
-                          wordCount: "词数:${book?.words?.length ?? 0}",
-                        ),
+                        child: Obx(() {
+                          int count = controller.validWordCounts[name] ?? (book?.words?.length ?? 0);
+                          return BookImage(
+                            title: "自建", subTitle: name, color: Colors.blueGrey, fontColor: Colors.white,
+                            wordCount: "词数:$count",
+                          );
+                        }),
                       ),
                     ),
                     const SizedBox(height: 8),

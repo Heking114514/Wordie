@@ -11,7 +11,11 @@ import 'package:wakelock/wakelock.dart';
 import 'package:get_storage/get_storage.dart';
 
 import '../../entity/word/po/word.dart';
+import '../../dicts/reader.dart';
 import '../../util/audio.dart';
+import '../../util/dictionary.dart';
+import '../../controller/home/home_v2.dart';
+import '../../controller/selectBook/selectBook.dart';
 
 typedef Future<void> PlayCallback(Player player);
 
@@ -125,6 +129,11 @@ class StudyController extends GetxController with WidgetsBindingObserver {
   var isManualMode = false.obs;
   var isRevealed = false.obs;
 
+  var isDifficultMode = false.obs;
+  List<WordVO> _backupPlayingWords = [];
+  int _backupPlayingIndex = 0;
+  bool _backupIsManualMode = false;
+
   var reviewDailyCount = 50.obs;
 
   AppService appService = Get.find();
@@ -234,27 +243,57 @@ class StudyController extends GetxController with WidgetsBindingObserver {
 
   void reviewTodayAgain() async {
     GetStorage().remove('review_date_${appService.bookId}');
+    GetStorage().remove('review_round_done_${appService.bookId}');
+    GetStorage().remove('review_batch_${appService.bookId}');
+    GetStorage().remove('review_batch_pos_${appService.bookId}');
+    GetStorage().remove('review_batch_selected_${appService.bookId}');
     _init();
+  }
+
+  void _saveQueueState() {
+    String mode = Get.parameters['mode'] ?? 'new';
+    List<String> ids = playingWords.map((e) => e.wordId!).toList();
+    GetStorage().write('saved_queue_${appService.bookId}_$mode', ids);
+    GetStorage().write('saved_queue_pos_${appService.bookId}_$mode', playingIndex);
   }
 
   Future<void> fetchCount() async {
     dailyStudyCount.value = (await wordDao.queryDailyPassWordCount()) ?? 0;
 
-    bookLearnedCount.value = await wordDao.queryProgressWordCount(appService.bookId) ?? 0;
-    bookTotalCount.value = await wordDao.queryWordCount(appService.bookId) ?? 0;
+    if (isDifficultMode.value) {
+      bookTotalCount.value = playingWords.length;
+    } else {
+      var book = appService.wordService.bookMap[appService.bookName];
+      if (book != null && book.words != null) {
+        int valid = 0;
+        int learned = 0;
+        for (var w in book.words!) {
+          if (w.id != null) {
+            var status = bookWordStatusMap[w.id!];
+            if (status == null || status.status != -1) valid++;
+            if (status != null && status.status != -1 && (status.status == 1 || (status.studyCycle ?? 0) > 0)) {
+              learned++;
+            }
+          }
+        }
+        bookTotalCount.value = valid;
+        bookLearnedCount.value = learned;
+      }
+    }
 
     if (Get.parameters['mode'] == 'review') {
       reviewCount.value = playingWords.length;
     } else {
-      var rCount = await wordDao.queryAdapter.query(
-        'select count(distinct word.word) as count from word_status status left join word word on word.word = status.word where status.status=1 and word.book=?1',
-        mapper: (Map<String, Object?> row) => (row['count'] as int?) ?? 0,
-        arguments:[appService.bookId]
-      );
-      reviewCount.value = rCount ?? 0;
+      int rCount = 0;
+      for (var s in bookWordStatusMap.values) {
+        if (s != null && s.status == 1) rCount++;
+      }
+      reviewCount.value = rCount;
     }
 
     var time = (await wordDao.queryStudyTime()) ?? 0;
+    var currentSession = DateTime.now().millisecondsSinceEpoch - (timeRecord.startTime ?? DateTime.now().millisecondsSinceEpoch);
+    time += currentSession;
     studyTime.value = (time / 1000 / 60).toStringAsFixed(1) + " 分钟";
   }
 
@@ -306,6 +345,7 @@ class StudyController extends GetxController with WidgetsBindingObserver {
         var status = bookWordStatusMap[wordId];
         wordStatus.value = status;
         bool isLearned = (status?.status == 1) || ((status?.studyCycle ?? 0) > 0);
+
         isRevealed.value = modeParam == 'review' ? false : isLearned;
         if (isRevealed.value && appService.autoPlayVoice) {
           playWordSound(word.value?.word, 1);
@@ -385,6 +425,161 @@ class StudyController extends GetxController with WidgetsBindingObserver {
       ),
       barrierDismissible: false,
     );
+  }
+
+  void addToDifficult() async {
+    var spell = word.value?.word;
+    if (spell == null) return;
+    bool added = await appService.wordService.addWordToDifficultBook(spell);
+    if (added) {
+      // also ensure the word definition is loaded if not already
+      if (appService.getWordBySpell(spell) == null) {
+        final fetched = await fetchWordDefinition(spell);
+        if (fetched != null) {
+          appService.wordService.wordMap[fetched.id!] = fetched;
+        }
+      }
+      Get.snackbar("已添加", "《$spell》已加入顽固词汇", duration: const Duration(seconds: 1));
+    } else {
+      Get.snackbar("提示", "《$spell》已在顽固词汇中", duration: const Duration(seconds: 1));
+    }
+  }
+
+  void openDifficultBook() async {
+    await stopPlay();
+    List<String> difficultWords = appService.wordService.getDifficultWords();
+    print('[DIFFICULT] openDifficultBook called, words count=${difficultWords.length}');
+    if (difficultWords.isEmpty) {
+      Get.snackbar("提示", "顽固词汇为空，点击 + 添加吧");
+      return;
+    }
+
+    final isDark = Theme.of(Get.context!).brightness == Brightness.dark;
+    Get.bottomSheet(
+      Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1E293B) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey.withOpacity(0.3), borderRadius: BorderRadius.circular(2))),
+            const SizedBox(height: 16),
+            Text("顽固词汇 (${difficultWords.length} 个)", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
+            const SizedBox(height: 20),
+            ListTile(
+              leading: const Icon(Icons.list_alt, color: Colors.teal),
+              title: Text("查看顽固词汇列表", style: TextStyle(color: isDark ? Colors.white : Colors.black)),
+              subtitle: Text("浏览所有已添加的顽固词汇", style: TextStyle(color: isDark ? Colors.white70 : Colors.black54)),
+              onTap: () {
+                Get.back();
+                _showDifficultWordList();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.menu_book, color: Colors.teal),
+              title: Text("学习顽固词汇", style: TextStyle(color: isDark ? Colors.white : Colors.black)),
+              subtitle: Text("进入学习模式，共 ${difficultWords.length} 个词", style: TextStyle(color: isDark ? Colors.white70 : Colors.black54)),
+              onTap: () {
+                Get.back();
+                _startDifficultStudy();
+              },
+            ),
+            const SizedBox(height: 10),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showDifficultWordList() {
+    List<String> difficultWords = appService.wordService.getDifficultWords();
+    List<WordVO> vos = [];
+    for (var spell in difficultWords) {
+      var w = appService.getWordBySpell(spell);
+      if (w != null) {
+        vos.add(appService.toWordVO(w)!);
+      }
+    }
+    final isDark = Theme.of(Get.context!).brightness == Brightness.dark;
+    Get.bottomSheet(
+      Container(
+        height: Get.height * 0.7,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1E293B) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+              child: Row(
+                children: [
+                  Expanded(child: Text("顽固词汇列表 (${vos.length})", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black))),
+                  IconButton(onPressed: () => Get.back(), icon: const Icon(Icons.close)),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                itemCount: vos.length,
+                itemBuilder: (_, i) => ListTile(
+                  title: Text(vos[i].word ?? "", style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black87)),
+                  subtitle: Text((vos[i].means ?? []).join("；"), maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B), fontSize: 13)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _startDifficultStudy() async {
+    List<String> difficultWords = appService.wordService.getDifficultWords();
+    if (difficultWords.isEmpty) return;
+
+    await stopPlay();
+
+    // 1. Snapshot current study state
+    _backupPlayingWords = List.from(playingWords);
+    _backupPlayingIndex = playingIndex;
+    _backupIsManualMode = isManualMode.value;
+
+    // 2. Build difficult words queue
+    List<WordVO> diffVos = [];
+    for (var spell in difficultWords) {
+      var w = appService.getWordBySpell(spell);
+      if (w == null) {
+        final fetched = await fetchWordDefinition(spell);
+        if (fetched != null) appService.wordService.wordMap[fetched.id!] = fetched;
+        w = fetched ?? Word(id: spell, word: spell, means: '暂无释义');
+      }
+      var vo = appService.toWordVO(w);
+      if (vo != null) diffVos.add(vo);
+    }
+
+    // 3. Swap to difficult mode
+    playingWords = diffVos;
+    playingIndex = 0;
+    isDifficultMode.value = true;
+    isManualMode.value = true;
+    _loadManualWord();
+  }
+
+  void exitDifficultMode() {
+    playingWords = _backupPlayingWords;
+    playingIndex = _backupPlayingIndex;
+    isManualMode.value = _backupIsManualMode;
+    isDifficultMode.value = false;
+
+    if (isManualMode.value) {
+      _loadManualWord();
+    } else {
+      startPlay();
+    }
   }
 
   void jumpToLearningPosition() {
@@ -514,14 +709,17 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     if (isManualMode.value) {
       if (playingIndex < playingWords.length - 1) {
         playingIndex++;
+        _loadManualWord();
+      } else {
+        Get.snackbar("提示", "这已经是最后一个单词了", duration: const Duration(seconds: 1));
       }
-      _loadManualWord();
     } else {
       playingIndex++;
       if (playingIndex >= playingWords.length) playingIndex = 0;
       await startPlay();
     }
 
+    _saveQueueState();
     await fetchCount();
     controlEnable.value = true;
   }
@@ -535,6 +733,8 @@ class StudyController extends GetxController with WidgetsBindingObserver {
       if (playingIndex > 0) {
         playingIndex--;
         _loadManualWord();
+      } else {
+        Get.snackbar("提示", "这已经是第一个单词了", duration: const Duration(seconds: 1));
       }
     } else {
       playingIndex--;
@@ -542,6 +742,7 @@ class StudyController extends GetxController with WidgetsBindingObserver {
       await startPlay();
     }
 
+    _saveQueueState();
     await fetchCount();
     controlEnable.value = true;
   }
@@ -561,7 +762,7 @@ class StudyController extends GetxController with WidgetsBindingObserver {
 
     if (isManualMode.value) {
       if (wId != null) {
-        var currentStatus = bookWordStatusMap[wId] ?? WordStatusPO(word: wId);
+        var currentStatus = bookWordStatusMap[wId] ?? WordStatusPO(word: "${appService.bookId}_$wId");
         currentStatus.status = 1;
         currentStatus.studyCycle = (currentStatus.studyCycle ?? 0) + 1;
         bookWordStatusMap[wId] = currentStatus;
@@ -598,7 +799,47 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     controlEnable.value = false;
     await stopPlay();
     var wId = word.value?.wordId;
-    if (wId != null) await studyService.delete(wId);
+
+    if (isDifficultMode.value) {
+      var w = word.value?.word;
+      if (w != null) {
+        var storage = GetStorage();
+        List<String> diffs = List<String>.from(storage.read('difficult_words') ?? []);
+        diffs.remove(w);
+        storage.write('difficult_words', diffs);
+        Get.snackbar("彻底掌握", "《$w》已被斩草除根，主线也不再出现！", duration: const Duration(seconds: 1));
+      }
+      if (wId != null) {
+        await studyService.delete(wId);
+        int bIdx = _backupPlayingWords.indexWhere((e) => e.wordId == wId);
+        if (bIdx != -1) {
+          _backupPlayingWords.removeAt(bIdx);
+          if (bIdx < _backupPlayingIndex) _backupPlayingIndex--;
+          if (_backupPlayingWords.isEmpty) {
+            _backupPlayingIndex = 0;
+          } else if (_backupPlayingIndex >= _backupPlayingWords.length) {
+            _backupPlayingIndex = _backupPlayingWords.length - 1;
+          }
+        }
+      }
+      playingWords.removeAt(playingIndex);
+      if (playingWords.isEmpty) {
+        word.value = null;
+      } else {
+        if (playingIndex >= playingWords.length) playingIndex = 0;
+        _loadManualWord();
+      }
+      fetchCount();
+      controlEnable.value = true;
+      return;
+    }
+
+    if (wId != null) {
+      await studyService.delete(wId);
+      if (Get.isRegistered<SelectBookController>()) {
+        Get.find<SelectBookController>().refreshBooks();
+      }
+    }
 
     if (isManualMode.value) {
       if (wId != null) {
@@ -607,11 +848,29 @@ class StudyController extends GetxController with WidgetsBindingObserver {
         bookWordStatusMap[wId] = currentStatus;
       }
       playingWords.removeAt(playingIndex);
-      if (playingIndex >= playingWords.length) {
-        playingIndex = (playingWords.length - 1).clamp(0, playingWords.length - 1);
+      print('[DELETE] after removeAt: playingWords.length=${playingWords.length} playingIndex=$playingIndex');
+      if (Get.parameters['mode'] == 'review') {
+        List<String> newBatch = playingWords.map((e) => e.wordId!).toList();
+        GetStorage().write('review_batch_${appService.bookId}', newBatch);
+        int pos = GetStorage().read('review_batch_pos_${appService.bookId}') ?? 0;
+        if (playingWords.isEmpty || pos >= playingWords.length) {
+          _completeReviewBatch();
+          controlEnable.value = true;
+          return;
+        }
       }
+      if (playingWords.isEmpty) {
+        word.value = null;
+      } else {
+        if (playingIndex >= playingWords.length) {
+          playingIndex = playingWords.length - 1;
+        }
+        _loadManualWord();
+      }
+      _saveQueueState();
+      await fetchCount();
+      print('[DELETE] after fetchCount: bookTotalCount=${bookTotalCount.value} bookLearnedCount=${bookLearnedCount.value}');
       controlEnable.value = true;
-      _loadManualWord();
     } else {
       var nextW = await studyService.fetchNextWord();
       if (nextW != null) {
@@ -623,20 +882,53 @@ class StudyController extends GetxController with WidgetsBindingObserver {
         if (playingWords.isEmpty) word.value = null;
       }
       await startPlay();
+      _saveQueueState();
       await fetchCount();
       controlEnable.value = true;
     }
   }
 
   Future<void> deleteByWord(String? w) async {
+    if (isDifficultMode.value && w != null) {
+      var storage = GetStorage();
+      List<String> diffs = List<String>.from(storage.read('difficult_words') ?? []);
+      diffs.remove(w);
+      storage.write('difficult_words', diffs);
+    }
+    if (isDifficultMode.value) {
+      int bIdx = _backupPlayingWords.indexWhere((e) => e.word == w);
+      if (bIdx != -1) {
+        _backupPlayingWords.removeAt(bIdx);
+        if (bIdx < _backupPlayingIndex) _backupPlayingIndex--;
+        if (_backupPlayingWords.isEmpty) {
+          _backupPlayingIndex = 0;
+        } else if (_backupPlayingIndex >= _backupPlayingWords.length) {
+          _backupPlayingIndex = _backupPlayingWords.length - 1;
+        }
+      }
+    }
     var wordIndex = playingWords.indexWhere((element) => element.word == w);
     if (wordIndex == -1) return;
     if (isManualMode.value) {
       playingWords.removeAt(wordIndex);
-      if (playingIndex >= playingWords.length) {
-        playingIndex = max(playingWords.length - 1, 0);
+      if (wordIndex < playingIndex) playingIndex--;
+      if (Get.parameters['mode'] == 'review') {
+        List<String> newBatch = playingWords.map((e) => e.wordId!).toList();
+        GetStorage().write('review_batch_${appService.bookId}', newBatch);
+        int pos = GetStorage().read('review_batch_pos_${appService.bookId}') ?? 0;
+        if (playingWords.isEmpty || pos >= playingWords.length) {
+          _completeReviewBatch();
+          return;
+        }
       }
-      _loadManualWord();
+      if (playingWords.isEmpty) {
+        word.value = null;
+      } else {
+        if (playingIndex >= playingWords.length) {
+          playingIndex = playingWords.length - 1;
+        }
+        _loadManualWord();
+      }
     } else {
       var nextW = await studyService.fetchNextWord();
       if (nextW != null) {
@@ -645,6 +937,9 @@ class StudyController extends GetxController with WidgetsBindingObserver {
         playingWords.removeAt(wordIndex);
         if (playingWords.isEmpty) word.value = null;
       }
+    }
+    if (Get.isRegistered<SelectBookController>()) {
+      Get.find<SelectBookController>().refreshBooks();
     }
     await fetchCount();
   }

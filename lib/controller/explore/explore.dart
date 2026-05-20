@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
+import '../../dao/word/word.dart';
 import '../../entity/word/vo/word.dart';
 import '../../service/app/app.dart';
 import '../../util/dictionary.dart';
@@ -14,6 +15,30 @@ class ExploreController extends GetxController {
   var searchResult = <WordVO>[].obs;
   final TextEditingController searchInput = TextEditingController();
   var isSearchingApi = false.obs;
+  var validWordCounts = <String, int>{}.obs;
+
+  @override
+  void onInit() {
+    super.onInit();
+    loadValidCounts();
+  }
+
+  void loadValidCounts() async {
+    var wordDao = Get.find<WordDao>();
+    var deletedStatuses = await wordDao.queryAdapter.queryList(
+      'SELECT word FROM word_status WHERE status = -1',
+      mapper: (Map<String, Object?> row) => row['word'] as String,
+    );
+    Set<String> deletedWords = deletedStatuses.where((w) => w.contains('_')).toSet();
+
+    for (var name in appService.wordService.systemBookNames) {
+      var book = appService.wordService.bookMap[name];
+      if (book != null && book.words != null) {
+        int validCount = book.words!.where((w) => w.id != null && !deletedWords.contains("${book.id}_${w.id}")).length;
+        validWordCounts[name] = validCount;
+      }
+    }
+  }
 
   void search(String q) {
     if (q.isEmpty) {
@@ -65,11 +90,12 @@ class ExploreController extends GetxController {
     final word = await fetchWordDefinition(spell);
     if (word != null) {
       appService.wordService.wordMap[word.id!] = word;
-      print('[SEARCH] word added to wordMap, total=${appService.wordService.wordMap.length}');
       final vo = appService.toWordVO(word);
-      if (vo != null) {
-        searchResult.insert(0, vo);
-        searchResult.refresh();
+      if (vo != null && searchInput.text.trim().toLowerCase() == spell) {
+        if (!searchResult.any((e) => e.word == vo.word)) {
+          searchResult.insert(0, vo);
+          searchResult.refresh();
+        }
       }
     } else {
       print('[SEARCH] fetchWordDefinition returned null for "$spell"');

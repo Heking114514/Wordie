@@ -6,7 +6,7 @@ import gzip
 import urllib.request
 import urllib.error
 
-WORD = sys.argv[1] if len(sys.argv) > 1 else "lumped"
+WORD = sys.argv[1] if len(sys.argv) > 1 else "crops"
 
 def fetch(url, headers=None):
     """返回 (body_str, final_url) 或 (None, None)"""

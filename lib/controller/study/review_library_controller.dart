@@ -3,7 +3,8 @@ import 'package:english/dao/word/word.dart';
 import 'package:english/entity/word/vo/word.dart';
 import 'package:english/service/app/app.dart';
 import 'package:get/get.dart';
-import 'package:get_storage/get_storage.dart'; 
+import 'package:get_storage/get_storage.dart';
+import '../../controller/selectBook/selectBook.dart';
 
 class ReviewLibraryController extends GetxController {
   final AppService appService = Get.find();
@@ -32,7 +33,8 @@ class ReviewLibraryController extends GetxController {
         var vo = appService.toWordVO(wordData);
         if (vo != null) {
           // === 核心修复点 3：通过强大的内存层层筛选，准确获得词书来源，不再依赖模糊的 SQL ===
-          vo.usaVoice = _findAccurateSourceBook(vo.word); 
+          vo.usaVoice = _findAccurateSourceBook(vo.word);
+          vo.helper = po.book; // 保存精准词书ID以便溯源操作
           vos.add(vo);
         }
       }
@@ -78,7 +80,8 @@ class ReviewLibraryController extends GetxController {
   }
 
   Future<void> returnToStudy(WordVO word) async {
-    await wordDao.upsetWordStatusById(word.wordId, 0);
+    int bId = int.tryParse(word.helper ?? "") ?? appService.bookId;
+    await wordDao.upsetWordStatusById(word.wordId, 0, bId);
     allWords.removeWhere((element) => element.wordId == word.wordId);
     _filterWords();
     Get.snackbar("操作成功", "${word.word} 已移回新词库", snackPosition: SnackPosition.BOTTOM);
@@ -117,12 +120,22 @@ class ReviewLibraryController extends GetxController {
       await storage.write('custom_books', customData);
     }
 
+    List<String> diffs = List<String>.from(storage.read('difficult_words') ?? []);
+    if (diffs.contains(word.word)) {
+      diffs.remove(word.word);
+      await storage.write('difficult_words', diffs);
+    }
+
     // === 核心修复点 4：强制设定该单词状态为 -1 (熟词彻底删除) ===
     // 这样下次 `queryNeedReviewWords` SQL 查状态为 1 的时候，就绝对不可能再查到它了！
-    await wordDao.upsetWordStatusById(word.wordId, -1);
+    int bId = int.tryParse(word.helper ?? "") ?? appService.bookId;
+    await wordDao.upsetWordStatusById(word.wordId, -1, bId);
 
     allWords.removeWhere((element) => element.wordId == word.wordId);
     _filterWords();
+    if (Get.isRegistered<SelectBookController>()) {
+      Get.find<SelectBookController>().refreshBooks();
+    }
     Get.snackbar("操作成功", "${word.word} 已彻底移除不再出现", snackPosition: SnackPosition.BOTTOM);
   }
 }

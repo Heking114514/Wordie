@@ -235,9 +235,10 @@ class AppService {
   Word? getWord(String? id) => wordService.wordMap[id];
 
   Word? getWordBySpell(String? spell) {
-    var find = wordService.wordMap.values.firstWhere((element) => element.word == spell, orElse: () => Word());
-    if (find.id == null) return null;
-    return find;
+    if (spell == null) return null;
+    var find = wordService.spellMap[spell];
+    if (find != null && find.id != null) return find;
+    return null;
   }
 
   WordVO? getWordVO(String? id) => toWordVO(wordService.wordMap[id]);
@@ -260,10 +261,11 @@ class AppService {
   }
 
   Future<bool?> queryWordDeleteStatus(String? word) async {
-    var status = await wordDao.queryWordStatus(word ?? "");
+    String wordKey = "${bookId}_$word";
+    var status = await wordDao.queryWordStatus(wordKey);
     return status?.status == -1;
   }
 
-  Future<void> deleteWord(String? wordId) async => await wordDao.upsetWordStatusById(wordId, -1);
-  Future<void> restoreWord(String? wordId) async => await wordDao.upsetWordStatusById(wordId, 0);
+  Future<void> deleteWord(String? wordId) async => await wordDao.upsetWordStatusById(wordId, -1, bookId);
+  Future<void> restoreWord(String? wordId) async => await wordDao.upsetWordStatusById(wordId, 0, bookId);
 }

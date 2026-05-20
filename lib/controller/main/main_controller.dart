@@ -2,7 +2,8 @@ import 'package:get/get.dart';
 import '../../controller/home/home_v2.dart';
 import '../../controller/explore/explore.dart';
 import '../../controller/statistic/statistic.dart';
-import '../../controller/profile/profile_controller.dart'; // 导入个人中心控制器
+import '../../controller/profile/profile_controller.dart';
+import '../../controller/selectBook/selectBook.dart';
 
 class MainController extends GetxController {
   var currentIndex = 0.obs;
@@ -20,10 +21,15 @@ class MainController extends GetxController {
     currentIndex.value = index;
     if (index == 0 && Get.isRegistered<HomeControllerV2>()) {
       Get.find<HomeControllerV2>().fetchInfo();
+    } else if (index == 1 && Get.isRegistered<ExploreController>()) {
+      Get.find<ExploreController>().loadValidCounts();
     } else if (index == 2 && Get.isRegistered<StatisticController>()) {
       Get.find<StatisticController>().fetchStats();
     } else if (index == 3 && Get.isRegistered<ProfileController>()) {
-      Get.find<ProfileController>().fetchProfileData(); // 切换时拉取打卡数据
+      Get.find<ProfileController>().fetchProfileData();
+    }
+    if (Get.isRegistered<SelectBookController>()) {
+      Get.find<SelectBookController>().refreshBooks();
     }
   }
 }

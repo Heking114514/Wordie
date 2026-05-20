@@ -34,10 +34,14 @@ class WordService {
     "ACT词汇": {"color": Color(0xFF8A6515), "fontColor":Colors.white, "title":"ACT", "subTitle":"ACT词汇"},
     "MBA词汇": {"color":Color(0xFFB61553), "fontColor":Colors.white, "title":"MBA", "subTitle":"MBA词汇"},
   };
-  var systemBookNames = <String>[].obs; 
-  var customBookNames = <String>[].obs; 
+  var systemBookNames = <String>[].obs;
+  var customBookNames = <String>[].obs;
   var wordMap = <String, Word>{};
   var bookMap = <String, Book>{};
+
+  // O(1) 拼写极速查询索引
+  var spellMap = <String, Word>{};
+
   var loaded = false;
   bool _isLoading = false;
 
@@ -56,6 +60,17 @@ class WordService {
       var words = await readWordMap();
       var books = await readBookMap(words);
       wordMap.addAll(words);
+
+      // 同步构建拼写索引
+      try {
+        spellMap.clear();
+        for (var w in wordMap.values) {
+          if (w.word != null) spellMap[w.word!] = w;
+        }
+      } catch (e) {
+        print('[WordService] spellMap build error: $e');
+      }
+
       systemBookNames.clear();
       for (var value in books) {
         var name = value.name!;
@@ -64,37 +79,75 @@ class WordService {
       }
 
       loadFetchedWordsCache(wordMap);
+
+      // 将网络缓存词并入索引
+      try {
+        for (var w in wordMap.values) {
+          if (w.word != null && !spellMap.containsKey(w.word)) {
+            spellMap[w.word!] = w;
+          }
+        }
+      } catch (e) {
+        print('[WordService] spellMap cache sync error: $e');
+      }
+
       await loadCustomBooks();
       loaded = true;
+    } catch (e) {
+      print('[WordService] FATAL ERROR during loadWords: $e');
     } finally {
       _isLoading = false;
     }
   }
 
   Future<void> loadCustomBooks() async {
-    var storage = GetStorage();
-    Map<String, dynamic> customData = storage.read('custom_books') ?? {};
+    try {
+      var storage = GetStorage();
+      Map<String, dynamic> customData = storage.read('custom_books') ?? {};
 
-    print('[WORD] loadCustomBooks: customData keys=${customData.keys.toList()} wordMap size=${wordMap.length}');
-    customBookNames.clear();
-    customData.forEach((name, spells) {
-      customBookNames.add(name);
-      List<Word> words =[];
-      int found = 0, missing = 0;
-      for (var s in spells) {
-        var find = wordMap.values.firstWhere((e) => e.word == s, orElse: () => Word());
-        if (find.id != null) {
-          words.add(find);
-          found++;
-        } else {
-          missing++;
-          print('[WORD]   spell "$s" NOT FOUND in wordMap');
+      customBookNames.clear();
+      customData.forEach((name, spells) {
+        customBookNames.add(name);
+        List<Word> words = [];
+
+        if (spells is List) {
+          for (var s in spells) {
+            String spellStr = s.toString();
+            var find = spellMap[spellStr];
+
+            if (find != null && find.id != null) {
+              words.add(find);
+            } else {
+              var placeholder = Word(id: spellStr, word: spellStr, means: '');
+              wordMap[spellStr] = placeholder;
+              spellMap[spellStr] = placeholder;
+              words.add(placeholder);
+            }
+          }
         }
-      }
-      String id = storage.read('book_id_$name') ?? "${name.hashCode.abs()}";
-      bookMap[name] = Book(id: id, name: name, words: words);
-      print('[WORD] book "$name" id=$id: $found found, $missing missing, total=${words.length}');
-    });
+        String id = storage.read('book_id_$name') ?? "${name.hashCode.abs()}";
+        bookMap[name] = Book(id: id, name: name, words: words);
+      });
+    } catch (e) {
+      print('[WordService] loadCustomBooks error: $e');
+    }
+  }
+
+  Future<bool> addWordToDifficultBook(String spell) async {
+    var storage = GetStorage();
+    List<String> words = List<String>.from(storage.read('difficult_words') ?? []);
+    if (words.contains(spell)) {
+      return false;
+    }
+    words.add(spell);
+    words.sort();
+    await storage.write('difficult_words', words);
+    return true;
+  }
+
+  List<String> getDifficultWords() {
+    var storage = GetStorage();
+    return List<String>.from(storage.read('difficult_words') ?? []);
   }
 
   Future<void> addWordToRawLibrary(String spell) async {

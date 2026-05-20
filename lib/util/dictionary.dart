@@ -119,20 +119,21 @@ Future<Word?> _tryJsonApiFetch(String spell) async {
 
 List<String> _parseMeans(String html) {
   final means = <String>[];
-  final m = RegExp(
-    r'<div\s+class="trans-container"[^>]*>(.*?)</div>\s*<!--\s*trans-container',
-    dotAll: true,
-  ).firstMatch(html) ?? RegExp(
-    r'<div\s+class="trans-container"[^>]*>(.*?)</div>',
-    dotAll: true,
-  ).firstMatch(html);
-  final block = m?.group(1) ?? '';
-  if (block.isEmpty) return means;
+  // 扫描所有 trans-container 块，防止有道放入空的占位块导致拦截
+  final matches = RegExp(r'<div\s+class="trans-container"[^>]*>(.*?)</div>', dotAll: true).allMatches(html);
 
-  final lis = RegExp(r'<li>(.*?)</li>', dotAll: true).allMatches(block);
-  for (var li in lis) {
-    final text = li.group(1)!.replaceAll(RegExp(r'<[^>]+>'), '').trim();
-    if (text.isNotEmpty) means.add(text);
+  for (var m in matches) {
+    final block = m.group(1) ?? '';
+    final lis = RegExp(r'<li>(.*?)</li>', dotAll: true).allMatches(block);
+
+    // 只要找到了含有 <li> 的块，就说明这是真正的释义区域
+    if (lis.isNotEmpty) {
+      for (var li in lis) {
+        final text = li.group(1)!.replaceAll(RegExp(r'<[^>]+>'), '').trim();
+        if (text.isNotEmpty) means.add(text);
+      }
+      return means;
+    }
   }
   return means;
 }
@@ -149,13 +150,39 @@ String _extractMeansFromTrs(List<dynamic>? trs) {
   if (trs == null) return '';
   final buf = StringBuffer();
   for (var t in trs) {
-    final pos = t['pos'] as String? ?? '';
-    final tran = t['tran'] as String? ?? '';
-    if (pos.isNotEmpty && tran.isNotEmpty) {
-      buf.writeln('$pos $tran');
-    } else if (tran.isNotEmpty) {
-      buf.writeln(tran);
+    if (t is Map && t.containsKey('tr')) {
+      final trList = t['tr'] as List<dynamic>?;
+      if (trList != null && trList.isNotEmpty) {
+        final trItem = trList[0];
+        if (trItem is Map && trItem.containsKey('l')) {
+          final l = trItem['l'] as Map?;
+          if (l != null && l.containsKey('i')) {
+            final iList = l['i'] as List<dynamic>?;
+            if (iList != null) {
+              buf.writeln(iList.join(' '));
+              continue;
+            }
+          }
+        }
+      }
     }
+    if (t is Map) {
+      final pos = t['pos'] as String? ?? '';
+      final tran = t['tran'] as String? ?? '';
+      if (pos.isNotEmpty || tran.isNotEmpty) {
+        buf.writeln('$pos $tran'.trim());
+      }
+    }
+  }
+
+  // 终极兜底：如果上面的规整提取完全失效，直接将 JSON 转字符串，用正则强行把所有中文抽出来
+  if (buf.isEmpty && trs.isNotEmpty) {
+     String rawStr = json.encode(trs);
+     RegExp exp = RegExp(r'[一-龥]+[a-zA-Z一-龥（）；，、\s]*');
+     var matches = exp.allMatches(rawStr);
+     if (matches.isNotEmpty) {
+       buf.writeln(matches.map((e) => e.group(0)).join('；'));
+     }
   }
   return buf.toString().trim();
 }
