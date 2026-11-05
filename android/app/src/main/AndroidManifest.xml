@@ -1,5 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.example.english">
+    package="com.wordie.english15.coexist">
    <application
         android:label="Wordie"
         android:name="${applicationName}"

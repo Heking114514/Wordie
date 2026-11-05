@@ -52,10 +52,10 @@ android {
     }
 
     defaultConfig {
-        applicationId "com.example.english"
+        applicationId "com.wordie.english15.coexist"
 
         // 【修改点 3】将 18 改为 21。很多插件（如 dynamic_color）要求最低 21
-        minSdkVersion 21
+        minSdkVersion flutter.minSdkVersion
 
         // 【修改点 4】直接写数字 34，不要用 flutter.targetSdkVersion
         targetSdkVersion 34

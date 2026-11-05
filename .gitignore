@@ -47,3 +47,6 @@ windows/flutter/
 *.pyc
 *.swp
 *.stackdump
+
+# --- Local E2E evidence and captured API responses ---
+.artifacts/

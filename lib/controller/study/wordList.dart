@@ -1,8 +1,5 @@
 import 'package:english/controller/app/app.dart';
 import 'package:english/controller/study/study.dart';
-import 'package:english/entity/word/po/word.dart';
-import 'package:english/service/study/study.dart';
-import 'package:english/service/word/word.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:get/get.dart';
 
@@ -16,6 +13,7 @@ class WordListController extends GetxController {
   var passList = Rx(<String>[]);
   var deleteList = Rx(<String>[]);
   var allList = Rx(<WordVO>[]);
+  var playingWords = <WordVO>[].obs;
 
   var wordSearchText = "".obs;
   @override
@@ -24,10 +22,11 @@ class WordListController extends GetxController {
     fetchWordList();
   }
 
-  void fetchWordList() async {
+  Future<void> fetchWordList() async {
     await fetchBookPassWordList();
     await fetchBookDeleteWordList();
     await fetchBookAllWordList();
+    playingWords.assignAll(Get.find<StudyController>().playingWords);
     onPageChanged(pageIndex.value);
   }
 
@@ -37,8 +36,7 @@ class WordListController extends GetxController {
     StudyController study = Get.find();
     var allList = await app.appService.wordDao
         .queryBookNotDeleteWord(app.appService.bookId);
-    var all =
-        allList.map((e) => study.appService.getWordVO(e)!).toList();
+    var all = allList.map((e) => study.appService.getWordVO(e)!).toList();
     this.allList.value = all;
   }
 
@@ -97,12 +95,13 @@ class WordListController extends GetxController {
   }
 
   /// 根据单词含义搜索单词
-  bool isContainsMeans(WordVO?word,String meansText){
+  bool isContainsMeans(WordVO? word, String meansText) {
     var means = word?.means;
-    if(means!=null) {
+    if (means != null) {
       for (var mean in means) {
-        var contains = mean.toString().toLowerCase().contains(meansText.toLowerCase());
-        if(contains){
+        var contains =
+            mean.toString().toLowerCase().contains(meansText.toLowerCase());
+        if (contains) {
           return true;
         }
       }
@@ -112,16 +111,16 @@ class WordListController extends GetxController {
 
   /// 设为熟词：删除单词
   Future<void> deleteWord(WordVO word) async {
-    AppService wordService = Get.find();
-    await wordService.deleteWord(word.wordId);
-    word.isDelete = await wordService.queryWordDeleteStatus(word.wordId);
+    StudyController studyController = Get.find();
+    await studyController.markFamiliarFromWordList(word);
+    word.isDelete = true;
   }
 
   /// 重新学习：从删除数据库，恢复单词
   Future<void> restoreWord(WordVO word) async {
-    AppService wordService = Get.find();
-    await wordService.restoreWord(word.wordId);
-    word.isDelete = await wordService.queryWordDeleteStatus(word.wordId);
+    StudyController studyController = Get.find();
+    await studyController.restoreWordFromWordList(word);
+    word.isDelete = false;
   }
 
   /// 获取单词删除状态

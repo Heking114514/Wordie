@@ -104,15 +104,7 @@ class WordView extends StatelessWidget {
                 border: Border.all(color: borderColor, width: 1.5),
                 // 移除廉价的阴影，改用细腻的描边，符合现代黑暗模式审美
               ),
-              child: Text(
-                word?.means?.join("\n") ?? "",
-                style: TextStyle(
-                  color: meaningTextColor,
-                  fontSize: 17,
-                  height: 1.6,
-                  fontWeight: FontWeight.w400,
-                ),
-              ),
+              child: _buildMeansContent(meaningTextColor, secondaryTextColor),
             ),
 
           // --- 例句展示区域 ---
@@ -144,6 +136,35 @@ class WordView extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+
+  Widget _buildMeansContent(Color meaningTextColor, Color secondaryTextColor) {
+    final meansText = word?.means?.where((e) => e.trim().isNotEmpty).join("\n") ?? "";
+    if (meansText.isNotEmpty) {
+      return Text(
+        meansText,
+        style: TextStyle(
+          color: meaningTextColor,
+          fontSize: 17,
+          height: 1.6,
+          fontWeight: FontWeight.w400,
+        ),
+      );
+    }
+    // 释义为空时显示加载提示（_tryFillEmptyMeans 会在后台尝试在线获取）
+    return Row(
+      children: [
+        SizedBox(
+          width: 14, height: 14,
+          child: CircularProgressIndicator(strokeWidth: 2, color: secondaryTextColor),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          "释义获取中…",
+          style: TextStyle(color: secondaryTextColor, fontSize: 14),
+        ),
+      ],
     );
   }
 

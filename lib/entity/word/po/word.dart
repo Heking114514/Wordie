@@ -27,7 +27,7 @@ class WordStatusPO {
   int? id;
   String? word;
 
-  //0:学习中 1:已完成 -1:删除
+  // 0: 学习中, 1: 已完成, -1: 熟词（可恢复）
   int? status;
 
   //学习周期

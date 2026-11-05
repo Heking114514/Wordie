@@ -7,10 +7,10 @@ class StatisticController extends GetxController {
   final AppService appService = Get.find();
   final WordDao wordDao = Get.find<WordDao>();
 
-  var totalStudyTime = 0.obs;     // 总共学习时长 (分钟)
-  var customBookCount = 0.obs;    // 自定义单词书数量
-  var totalLearnedWords = 0.obs;  // 一共背了多少词
-  var needReviewWords = 0.obs;    // 还有多少词要复习
+  var totalStudyTime = 0.obs; // 总共学习时长 (分钟)
+  var customBookCount = 0.obs; // 自定义单词书数量
+  var totalLearnedWords = 0.obs; // 一共背了多少词
+  var needReviewWords = 0.obs; // 还有多少词要复习
 
   @override
   void onInit() {
@@ -28,7 +28,7 @@ class StatisticController extends GetxController {
 
     // 3. 获取一共背了多少词 (使用 queryAdapter 直接查询所有状态为已学或进入周期的单词)
     var learnedCount = await wordDao.queryAdapter.query(
-      'SELECT count(0) as count FROM word_status WHERE status=1 OR studyCycle>0',
+      'SELECT count(0) as count FROM word_status WHERE status!=-1 AND (status=1 OR studyCycle>0)',
       mapper: (Map<String, Object?> row) => row['count'] as int?,
     );
     totalLearnedWords.value = learnedCount ?? 0;

@@ -1,7 +1,9 @@
-package com.example.english
+package com.wordie.english15.coexist
 
 import android.Manifest
+import android.app.Activity
 import android.content.ContentValues
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.CalendarContract
 import androidx.core.app.ActivityCompat
@@ -13,16 +15,21 @@ import java.util.Calendar
 import java.util.TimeZone
 
 class MainActivity: FlutterActivity() {
-    private val CHANNEL = "com.example.english/calendar"
+    private val CALENDAR_CHANNEL = "com.wordie.english15.coexist/calendar"
+    private val FILES_CHANNEL = "com.wordie.english15.coexist/files"
     private val PERM_REQ_CODE = 1001
+    private val CREATE_BACKUP_REQUEST = 2001
+    private val OPEN_BACKUP_REQUEST = 2002
     private var pendingResult: MethodChannel.Result? = null
     private var pendingCallArgs: Map<String, Any?>? = null
     private var pendingAction: String = ""
+    private var fileResult: MethodChannel.Result? = null
+    private var pendingBackupText: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CALENDAR_CHANNEL).setMethodCallHandler { call, result ->
             if (call.method == "addEvent" || call.method == "removeEvent") {
                 if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR) != PackageManager.PERMISSION_GRANTED) {
                     pendingResult = result
@@ -39,6 +46,94 @@ class MainActivity: FlutterActivity() {
             } else {
                 result.notImplemented()
             }
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, FILES_CHANNEL).setMethodCallHandler { call, result ->
+            try {
+                when (call.method) {
+                    "saveText" -> openSaveDocument(call.arguments as? Map<String, Any?>, result)
+                    "openText" -> openBackupDocument(result)
+                    else -> result.notImplemented()
+                }
+            } catch (error: Exception) {
+                fileResult = null
+                pendingBackupText = null
+                result.error("FILE_CHANNEL", error.message, null)
+            }
+        }
+    }
+
+    private fun openSaveDocument(args: Map<String, Any?>?, result: MethodChannel.Result) {
+        if (fileResult != null) {
+            result.error("BUSY", "已有文件选择操作正在进行", null)
+            return
+        }
+        val fileName = args?.get("fileName") as? String ?: "Wordie.backup"
+        val mimeType = args?.get("mimeType") as? String ?: "application/json"
+        pendingBackupText = args?.get("content") as? String
+        fileResult = result
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = mimeType
+            putExtra(Intent.EXTRA_TITLE, fileName)
+        }
+        try {
+            startActivityForResult(intent, CREATE_BACKUP_REQUEST)
+        } catch (error: Exception) {
+            pendingBackupText = null
+            fileResult = null
+            result.error("NO_DOCUMENT_PICKER", error.message, null)
+        }
+    }
+
+    private fun openBackupDocument(result: MethodChannel.Result) {
+        if (fileResult != null) {
+            result.error("BUSY", "已有文件选择操作正在进行", null)
+            return
+        }
+        fileResult = result
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+            putExtra(Intent.EXTRA_MIME_TYPES, arrayOf("application/json", "text/plain", "application/octet-stream"))
+        }
+        try {
+            startActivityForResult(intent, OPEN_BACKUP_REQUEST)
+        } catch (error: Exception) {
+            fileResult = null
+            result.error("NO_DOCUMENT_PICKER", error.message, null)
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != CREATE_BACKUP_REQUEST && requestCode != OPEN_BACKUP_REQUEST) {
+            return
+        }
+        val result = fileResult
+        fileResult = null
+        if (resultCode != Activity.RESULT_OK || data?.data == null) {
+            pendingBackupText = null
+            result?.success(null)
+            return
+        }
+        val uri = data.data!!
+        try {
+            if (requestCode == CREATE_BACKUP_REQUEST) {
+                contentResolver.openOutputStream(uri)?.bufferedWriter(Charsets.UTF_8).use { writer ->
+                    writer?.write(pendingBackupText ?: "")
+                }
+                pendingBackupText = null
+                result?.success(uri.toString())
+            } else {
+                val text = contentResolver.openInputStream(uri)
+                    ?.bufferedReader(Charsets.UTF_8)
+                    ?.use { it.readText() }
+                result?.success(text)
+            }
+        } catch (error: Exception) {
+            pendingBackupText = null
+            result?.error("FILE_IO", error.message, null)
         }
     }
 

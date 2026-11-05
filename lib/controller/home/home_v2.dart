@@ -1,6 +1,5 @@
 import 'dart:math';
 import 'package:english/dao/word/word.dart';
-import 'package:english/dicts/reader.dart';
 import 'package:english/entity/word/vo/word.dart';
 import 'package:english/service/app/app.dart';
 import 'package:flutter/material.dart';
@@ -50,7 +49,8 @@ class HomeControllerV2 extends GetxController {
 
   void _loadDailyWordFromStorage() {
     final storage = GetStorage();
-    final today = "${DateTime.now().year}-${DateTime.now().month}-${DateTime.now().day}";
+    final today =
+        "${DateTime.now().year}-${DateTime.now().month}-${DateTime.now().day}";
     final savedDate = storage.read('daily_word_date') ?? '';
     if (savedDate == today) {
       final word = storage.read('daily_word_word') ?? '';
@@ -60,7 +60,8 @@ class HomeControllerV2 extends GetxController {
           word: word,
           ukVoice: storage.read('daily_word_uk') ?? '',
           usaVoice: storage.read('daily_word_us') ?? '',
-          means: (storage.read('daily_word_means') as String? ?? '').split('\n'),
+          means:
+              (storage.read('daily_word_means') as String? ?? '').split('\n'),
           sentence: storage.read('daily_word_sentence'),
           sentenceMeans: storage.read('daily_word_sentence_means'),
         );
@@ -76,21 +77,28 @@ class HomeControllerV2 extends GetxController {
     }
     await Get.toNamed("/study?mode=new");
     await const Duration(milliseconds: 500).delay();
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent));
+    SystemChrome.setSystemUIOverlayStyle(
+        SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent));
     fetchInfo();
   }
 
-  void startReview() {
-    // check for active batch on current book
+  void startReview() async {
+    final todayCount = await _getReviewCountForBook(appService.bookName);
+    if (todayCount == 0) {
+      Get.snackbar("今日无需复习", "今天还没有学习新词，先去学一些吧");
+      return;
+    }
+
     int bId = appService.bookId;
     var savedBatch = GetStorage().read('review_batch_$bId');
     var savedPos = GetStorage().read('review_batch_pos_$bId') ?? 0;
-    if (savedBatch != null && savedBatch is List && savedBatch.isNotEmpty && (savedPos as int) < savedBatch.length) {
-      // active batch exists, go straight to review
+    if (savedBatch != null &&
+        savedBatch is List &&
+        savedBatch.isNotEmpty &&
+        (savedPos as int) < savedBatch.length) {
       toReview();
       return;
     }
-    // no active batch, show settings
     showReviewSettingsDialog();
   }
 
@@ -101,7 +109,8 @@ class HomeControllerV2 extends GetxController {
     }
     await Get.toNamed("/study?mode=review");
     await const Duration(milliseconds: 500).delay();
-    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent));
+    SystemChrome.setSystemUIOverlayStyle(
+        SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent));
     fetchInfo();
   }
 
@@ -122,10 +131,12 @@ class HomeControllerV2 extends GetxController {
       if (c > 0) allBooks.add(name);
     }
     if (allBooks.isEmpty) {
-      Get.snackbar("提示", "暂无有复习进度的词书，先去学习吧");
+      Get.snackbar("今日无需复习", "今天还没有学习新词，先去学一些吧");
       return;
     }
-    tempReviewBook.value = allBooks.contains(appService.bookName) ? appService.bookName : allBooks.first;
+    tempReviewBook.value = allBooks.contains(appService.bookName)
+        ? appService.bookName
+        : allBooks.first;
 
     Get.bottomSheet(
       Container(
@@ -137,33 +148,57 @@ class HomeControllerV2 extends GetxController {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
-          children:[
-            Text("复习设置", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black)),
+          children: [
+            Text("复习设置",
+                style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.white : Colors.black)),
             const SizedBox(height: 15),
-            Text("复习模式已固定为：手动沉浸模式", style: TextStyle(fontSize: 13, color: const Color(0xFF6366F1), fontWeight: FontWeight.bold)),
+            Text("复习范围：今天新学且已完成的单词",
+                style: TextStyle(
+                    fontSize: 13,
+                    color: const Color(0xFF6366F1),
+                    fontWeight: FontWeight.bold)),
             const SizedBox(height: 15),
-            Text("选择要复习的词书", style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: isDark ? Colors.white70 : Colors.black87)),
+            Text("选择要复习的词书",
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: isDark ? Colors.white70 : Colors.black87)),
             const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 14),
               decoration: BoxDecoration(
-                color: isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
+                color:
+                    isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Obx(() => DropdownButton<String>(
-                value: allBooks.contains(tempReviewBook.value) ? tempReviewBook.value : allBooks.first,
-                isExpanded: true,
-                underline: const SizedBox(),
-                dropdownColor: isDark ? const Color(0xFF1E293B) : Colors.white,
-                style: TextStyle(color: isDark ? Colors.white : Colors.black, fontSize: 15),
-                items: allBooks.map((b) => DropdownMenuItem(
-                  value: b,
-                  child: Text(b, style: TextStyle(color: isDark ? Colors.white : Colors.black)),
-                )).toList(),
-                onChanged: (v) {
-                  if (v != null) tempReviewBook.value = v;
-                },
-              )),
+                    value: allBooks.contains(tempReviewBook.value)
+                        ? tempReviewBook.value
+                        : allBooks.first,
+                    isExpanded: true,
+                    underline: const SizedBox(),
+                    dropdownColor:
+                        isDark ? const Color(0xFF1E293B) : Colors.white,
+                    style: TextStyle(
+                        color: isDark ? Colors.white : Colors.black,
+                        fontSize: 15),
+                    items: allBooks
+                        .map((b) => DropdownMenuItem(
+                              value: b,
+                              child: Text(b,
+                                  style: TextStyle(
+                                      color: isDark
+                                          ? Colors.white
+                                          : Colors.black)),
+                            ))
+                        .toList(),
+                    onChanged: (v) {
+                      if (v != null) tempReviewBook.value = v;
+                    },
+                  )),
             ),
             Obx(() {
               final book = appService.wordService.bookMap[tempReviewBook.value];
@@ -175,17 +210,24 @@ class HomeControllerV2 extends GetxController {
                   final count = snap.data ?? 0;
                   return Padding(
                     padding: const EdgeInsets.only(top: 8, bottom: 5),
-                    child: Text("该词书有 $count 个待复习词汇", style: TextStyle(fontSize: 12, color: isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B))),
+                    child: Text("今日已学 $count 个词",
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: isDark
+                                ? const Color(0xFF94A3B8)
+                                : const Color(0xFF64748B))),
                   );
                 },
               );
             }),
-            Obx(() => _buildSettingRow("每批复习数量", tempReviewCount.value,[10, 20, 30, 50], (v) {
-              tempReviewCount.value = v;
-            }, isDark)),
-            Obx(() => _buildSettingRow("滚动次数", tempReviewCycles.value,[1, 2, 3], (v) {
-              tempReviewCycles.value = v;
-            }, isDark)),
+            Obx(() => _buildSettingRow(
+                    "今日复习数量", tempReviewCount.value, [10, 20, 30, 50], (v) {
+                  tempReviewCount.value = v;
+                }, isDark)),
+            Obx(() => _buildSettingRow(
+                    "滚动次数", tempReviewCycles.value, [1, 2, 3], (v) {
+                  tempReviewCycles.value = v;
+                }, isDark)),
             const SizedBox(height: 5),
             SizedBox(
               width: double.infinity,
@@ -193,12 +235,17 @@ class HomeControllerV2 extends GetxController {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF6366F1),
                   padding: const EdgeInsets.symmetric(vertical: 15),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
                 ),
                 onPressed: () {
                   appService.reviewDailyCount = tempReviewCount.value;
-                  GetStorage().write('review_target_${appService.getBookId(tempReviewBook.value)}', tempReviewCount.value);
-                  GetStorage().write('review_cycles_${appService.getBookId(tempReviewBook.value)}', tempReviewCycles.value);
+                  GetStorage().write(
+                      'review_target_${appService.getBookId(tempReviewBook.value)}',
+                      tempReviewCount.value);
+                  GetStorage().write(
+                      'review_cycles_${appService.getBookId(tempReviewBook.value)}',
+                      tempReviewCycles.value);
                   if (tempReviewBook.value != appService.bookName) {
                     appService.selectBook(tempReviewBook.value);
                     fetchInfo();
@@ -206,7 +253,8 @@ class HomeControllerV2 extends GetxController {
                   Get.back();
                   toReview();
                 },
-                child: const Text("开始复习", style: TextStyle(fontSize: 16, color: Colors.white)),
+                child: const Text("开始复习",
+                    style: TextStyle(fontSize: 16, color: Colors.white)),
               ),
             )
           ],
@@ -217,33 +265,41 @@ class HomeControllerV2 extends GetxController {
   }
 
   Future<int> _getReviewCountForBook(String bookName) async {
-    var book = appService.wordService.bookMap[bookName];
+    final book = appService.wordService.bookMap[bookName];
     if (book == null) return 0;
-    int bId = int.tryParse(book.id ?? '0') ?? 0;
-    if (bId == 0) return 0;
-    var statuses = await wordDao.queryWordStatusByBook(bId);
-    int count = 0;
-    for (var s in statuses) {
-      if (s.status == 1) count++;
-    }
-    return count;
+    final bookId = int.tryParse(book.id ?? '0') ?? 0;
+    if (bookId == 0) return 0;
+    return await wordDao.queryTodayReviewCount(bookId) ?? 0;
   }
 
-  Widget _buildSettingRow(String title, int currentValue, List<int> options, Function(int) onChanged, bool isDark) {
+  Widget _buildSettingRow(String title, int currentValue, List<int> options,
+      Function(int) onChanged, bool isDark) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children:[
-          Text(title, style: TextStyle(fontSize: 16, color: isDark ? Colors.white70 : Colors.black87)),
+        children: [
+          Text(title,
+              style: TextStyle(
+                  fontSize: 16,
+                  color: isDark ? Colors.white70 : Colors.black87)),
           DropdownButton<int>(
-            value: options.contains(currentValue) ? currentValue : options.first,
-            items: options.map((e) => DropdownMenuItem(value: e, child: Text("$e", style: TextStyle(color: isDark ? Colors.white : Colors.black)))).toList(),
+            value:
+                options.contains(currentValue) ? currentValue : options.first,
+            items: options
+                .map((e) => DropdownMenuItem(
+                    value: e,
+                    child: Text("$e",
+                        style: TextStyle(
+                            color: isDark ? Colors.white : Colors.black))))
+                .toList(),
             onChanged: (v) {
               if (v != null) onChanged(v);
             },
             underline: const SizedBox(),
-            icon: Icon(Icons.arrow_drop_down, color: isDark ? const Color(0xFF818CF8) : const Color(0xFF6366F1)),
+            icon: Icon(Icons.arrow_drop_down,
+                color:
+                    isDark ? const Color(0xFF818CF8) : const Color(0xFF6366F1)),
             dropdownColor: isDark ? const Color(0xFF1E293B) : Colors.white,
           ),
         ],
@@ -256,7 +312,8 @@ class HomeControllerV2 extends GetxController {
     wordBook.value = appService.bookName;
     await appService.readWords();
 
-    isBookValid.value = appService.wordService.bookMap.containsKey(appService.bookName);
+    isBookValid.value =
+        appService.wordService.bookMap.containsKey(appService.bookName);
     if (!isBookValid.value) {
       progress.value = "0 / 0";
       progressPercent.value = 0.0;
@@ -271,11 +328,11 @@ class HomeControllerV2 extends GetxController {
 
     int deleted = 0;
     int learned = 0;
-    int reviewing = 0;
     for (var s in statuses) {
       if (s.status == -1) deleted++;
-      if (s.status != -1 && (s.status == 1 || (s.studyCycle ?? 0) > 0)) learned++;
-      if (s.status == 1) reviewing++;
+      if (s.status != -1 && (s.status == 1 || (s.studyCycle ?? 0) > 0)) {
+        learned++;
+      }
     }
 
     int allCount = (book?.words?.length ?? 0) - deleted;
@@ -283,10 +340,11 @@ class HomeControllerV2 extends GetxController {
 
     progress.value = "$progressCount / $allCount";
     progressPercent.value = allCount > 0 ? progressCount / allCount : 0.0;
-    if(progressPercent.value > 1.0) progressPercent.value = 1.0;
+    if (progressPercent.value > 1.0) progressPercent.value = 1.0;
 
     dailyWordCount.value = await wordDao.queryDailyPassWordCount() ?? 0;
-    reviewCount.value = reviewing;
+    reviewCount.value =
+        await wordDao.queryTodayReviewCount(appService.bookId) ?? 0;
     studyTime.value = ((await wordDao.queryStudyTime()) ?? 0) / 1000 / 60;
 
     calculateStreakDays();
@@ -303,19 +361,23 @@ class HomeControllerV2 extends GetxController {
     for (var r in records) {
       if (r.startTime != null && r.endTime != null) {
         var date = DateTime.fromMillisecondsSinceEpoch(r.startTime!);
-        String dateKey = "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
-        dailyTime[dateKey] = (dailyTime[dateKey] ?? 0) + (r.endTime! - r.startTime!);
+        String dateKey =
+            "${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}";
+        dailyTime[dateKey] =
+            (dailyTime[dateKey] ?? 0) + (r.endTime! - r.startTime!);
       }
     }
 
     int streak = 0;
     DateTime checkDate = DateTime.now();
-    String todayKey = "${checkDate.year}-${checkDate.month.toString().padLeft(2, '0')}-${checkDate.day.toString().padLeft(2, '0')}";
+    String todayKey =
+        "${checkDate.year}-${checkDate.month.toString().padLeft(2, '0')}-${checkDate.day.toString().padLeft(2, '0')}";
     if ((dailyTime[todayKey] ?? 0) >= 600000) streak++;
 
     checkDate = checkDate.subtract(const Duration(days: 1));
     while (true) {
-      String key = "${checkDate.year}-${checkDate.month.toString().padLeft(2, '0')}-${checkDate.day.toString().padLeft(2, '0')}";
+      String key =
+          "${checkDate.year}-${checkDate.month.toString().padLeft(2, '0')}-${checkDate.day.toString().padLeft(2, '0')}";
       if ((dailyTime[key] ?? 0) >= 600000) {
         streak++;
         checkDate = checkDate.subtract(const Duration(days: 1));
@@ -329,7 +391,8 @@ class HomeControllerV2 extends GetxController {
   String _lastDailyWordDate = '';
 
   void fetchDailyWord() async {
-    final today = "${DateTime.now().year}-${DateTime.now().month}-${DateTime.now().day}";
+    final today =
+        "${DateTime.now().year}-${DateTime.now().month}-${DateTime.now().day}";
     if (_lastDailyWordDate == today && dailyWord.value != null) return;
 
     await appService.readWords();
@@ -347,7 +410,8 @@ class HomeControllerV2 extends GetxController {
 
     if (book != null && book.words != null && book.words!.isNotEmpty) {
       var words = book.words!;
-      var difficultWords = words.where((w) => (w.word?.length ?? 0) > 5).toList();
+      var difficultWords =
+          words.where((w) => (w.word?.length ?? 0) > 5).toList();
 
       WordVO? picked;
       if (difficultWords.isNotEmpty) {
