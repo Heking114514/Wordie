@@ -1,6 +1,7 @@
 // lib/main.dart
 import 'dart:io';
 import 'package:english/controller/app/app.dart';
+import 'package:english/controller/update/update_controller.dart';
 import 'package:english/route/routes.dart';
 import 'package:english/service/app/app.dart';
 import 'package:english/service/word/word.dart';
@@ -78,8 +79,12 @@ void main() async {
   Get.put(WordService());
   Get.put(AppService());
   Get.put(AppController());
+  final updateController = Get.put(UpdateController());
 
   runApp(const MyApp());
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    updateController.checkOnStartup();
+  });
 }
 
 class NoBounceScrollBehavior extends ScrollBehavior {

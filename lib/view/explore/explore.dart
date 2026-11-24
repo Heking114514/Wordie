@@ -446,11 +446,9 @@ class _ExploreWordDetailSheet extends StatelessWidget {
                         ...examples.map(
                           (example) => _ExampleCard(
                             example: example,
-                            wordId: detail.id ?? detail.word,
                             panelColor: panelColor,
                             borderColor: borderColor,
                             mutedColor: mutedColor,
-                            accentColor: accentColor,
                           ),
                         ),
                       const SizedBox(height: 16),
@@ -578,19 +576,15 @@ class _PronunciationButton extends StatelessWidget {
 
 class _ExampleCard extends StatelessWidget {
   final Sentence example;
-  final String? wordId;
   final Color panelColor;
   final Color borderColor;
   final Color mutedColor;
-  final Color accentColor;
 
   const _ExampleCard({
     required this.example,
-    required this.wordId,
     required this.panelColor,
     required this.borderColor,
     required this.mutedColor,
-    required this.accentColor,
   });
 
   @override
@@ -610,29 +604,7 @@ class _ExampleCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
-            onTap: sentence.trim().isEmpty
-                ? null
-                : () => playSentenceSound(sentence, cacheName: wordId),
-            borderRadius: BorderRadius.circular(8),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(top: 2),
-                  child: Icon(
-                    Icons.volume_up_rounded,
-                    color: accentColor,
-                    size: 19,
-                  ),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: WordSentence(sentence: sentence),
-                ),
-              ],
-            ),
-          ),
+          WordSentence(sentence: sentence),
           if (translation.trim().isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(

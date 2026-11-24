@@ -117,33 +117,10 @@ class StudyPage extends GetView<StudyController> {
               if (controller.isDifficultMode.value) {
                 return const SizedBox.shrink();
               }
-              final isReview = (Get.parameters['mode'] ?? 'new') == 'review';
-              return PopupMenuButton<String>(
+              return IconButton(
                 tooltip: "更多操作",
                 icon: const Icon(Icons.more_horiz_rounded),
-                onSelected: (value) => _openWordJumpSearch(
-                  context,
-                  markPreviousLearned: value == 'learn',
-                ),
-                itemBuilder: (context) => [
-                  const PopupMenuItem<String>(
-                    value: 'jump',
-                    child: ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: Icon(Icons.search_rounded),
-                      title: Text("仅搜索跳转单词"),
-                    ),
-                  ),
-                  if (!isReview)
-                    const PopupMenuItem<String>(
-                      value: 'learn',
-                      child: ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        leading: Icon(Icons.playlist_add_check_circle_rounded),
-                        title: Text("搜索跳转并将前边的单词置为已学"),
-                      ),
-                    ),
-                ],
+                onPressed: () => _showJumpActions(context),
               );
             }),
           ],
@@ -334,16 +311,36 @@ class StudyPage extends GetView<StudyController> {
     );
   }
 
+  Future<void> _showJumpActions(BuildContext context) async {
+    final isReview = (Get.parameters['mode'] ?? 'new') == 'review';
+    final action = await Get.bottomSheet<String>(
+      _JumpActionsSheet(showBulkLearn: !isReview),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black54,
+      enableDrag: true,
+    );
+    if (action == null) return;
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    await _openWordJumpSearch(
+      context,
+      markPreviousLearned: action == 'learn',
+    );
+  }
+
   Future<void> _openWordJumpSearch(
     BuildContext context, {
     required bool markPreviousLearned,
   }) async {
-    final target = await Get.dialog<WordVO>(
-      _WordJumpDialog(
+    final target = await Get.bottomSheet<WordVO>(
+      _WordJumpSheet(
         controller: controller,
         markPreviousLearned: markPreviousLearned,
       ),
-      barrierDismissible: false,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      barrierColor: Colors.black54,
+      enableDrag: true,
     );
     if (target == null) return;
     await controller.jumpToSearchResult(
@@ -1721,20 +1718,184 @@ class StudyPage extends GetView<StudyController> {
   }
 }
 
-class _WordJumpDialog extends StatefulWidget {
+class _JumpActionsSheet extends StatelessWidget {
+  final bool showBulkLearn;
+
+  const _JumpActionsSheet({required this.showBulkLearn});
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final bg = isDark ? const Color(0xFF111827) : Colors.white;
+    final text = isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1E293B);
+    final muted = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final divider = isDark ? const Color(0xFF263244) : const Color(0xFFE8EDF5);
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 42,
+              height: 4,
+              decoration: BoxDecoration(
+                color: muted.withOpacity(0.35),
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "单词跳转",
+                        style: TextStyle(
+                          color: text,
+                          fontSize: 21,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        "选择跳转后如何处理前面的单词",
+                        style: TextStyle(color: muted, fontSize: 13),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: Get.back,
+                  icon: Icon(Icons.close_rounded, color: muted),
+                  tooltip: "关闭",
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            _JumpActionRow(
+              icon: Icons.search_rounded,
+              iconColor: const Color(0xFF3B82F6),
+              iconBackground: const Color(0xFFEFF6FF),
+              title: "仅搜索跳转单词",
+              subtitle: "定位到目标词，不修改任何学习进度",
+              onTap: () => Get.back(result: 'jump'),
+            ),
+            if (showBulkLearn) ...[
+              Divider(height: 1, color: divider),
+              _JumpActionRow(
+                icon: Icons.playlist_add_check_circle_rounded,
+                iconColor: const Color(0xFF10B981),
+                iconBackground: const Color(0xFFECFDF5),
+                title: "跳转并标记前序词",
+                subtitle: "前面的未学词置为已学，不计入今日复习量",
+                onTap: () => Get.back(result: 'learn'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _JumpActionRow extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final Color iconBackground;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _JumpActionRow({
+    required this.icon,
+    required this.iconColor,
+    required this.iconBackground,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final text = isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1E293B);
+    final muted = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 4),
+          child: Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: iconBackground,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: iconColor, size: 24),
+              ),
+              const SizedBox(width: 15),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: text,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: TextStyle(
+                        color: muted,
+                        fontSize: 12,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Icon(Icons.chevron_right_rounded, color: muted, size: 22),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WordJumpSheet extends StatefulWidget {
   final StudyController controller;
   final bool markPreviousLearned;
 
-  const _WordJumpDialog({
+  const _WordJumpSheet({
     required this.controller,
     required this.markPreviousLearned,
   });
 
   @override
-  State<_WordJumpDialog> createState() => _WordJumpDialogState();
+  State<_WordJumpSheet> createState() => _WordJumpSheetState();
 }
 
-class _WordJumpDialogState extends State<_WordJumpDialog> {
+class _WordJumpSheetState extends State<_WordJumpSheet> {
   final TextEditingController _searchController = TextEditingController();
   List<WordVO> _results = <WordVO>[];
   String _query = '';
@@ -1755,81 +1916,275 @@ class _WordJumpDialogState extends State<_WordJumpDialog> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final title = widget.markPreviousLearned ? "搜索跳转并标记前序词" : "搜索并跳转单词";
-    return AlertDialog(
-      title: Text(title),
-      content: SizedBox(
-        width: double.maxFinite,
-        height: 430,
-        child: Column(
-          children: [
-            TextField(
-              controller: _searchController,
-              autofocus: true,
-              onChanged: _onQueryChanged,
-              decoration: InputDecoration(
-                hintText: "输入英文或中文释义",
-                prefixIcon: const Icon(Icons.search_rounded),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+    final bg = isDark ? const Color(0xFF111827) : Colors.white;
+    final panel = isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC);
+    final text = isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1E293B);
+    final muted = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final border = isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0);
+    final accent = widget.markPreviousLearned
+        ? const Color(0xFF10B981)
+        : const Color(0xFF3B82F6);
+    final height = MediaQuery.of(context).size.height * 0.78;
+
+    return Padding(
+      padding:
+          EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        height: height,
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            children: [
+              Container(
+                width: 42,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: muted.withOpacity(0.35),
+                  borderRadius: BorderRadius.circular(4),
                 ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: _query.isEmpty
-                  ? Center(
-                      child: Text(
-                        "输入关键词搜索当前学习列表",
-                        style: TextStyle(
-                          color: isDark ? Colors.white54 : Colors.black45,
-                        ),
-                      ),
-                    )
-                  : _results.isEmpty
-                      ? Center(
-                          child: Text(
-                            "当前学习列表中没有匹配项",
-                            style: TextStyle(
-                              color: isDark ? Colors.white54 : Colors.black45,
-                            ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "搜索学习单词",
+                          style: TextStyle(
+                            color: text,
+                            fontSize: 21,
+                            fontWeight: FontWeight.w700,
                           ),
-                        )
-                      : ListView.separated(
-                          itemCount: _results.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (context, index) {
-                            final word = _results[index];
-                            return ListTile(
-                              contentPadding:
-                                  const EdgeInsets.symmetric(horizontal: 4),
-                              title: Text(
-                                word.word ?? "",
-                                style: const TextStyle(
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 9,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: accent.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                widget.markPreviousLearned ? "跳转并标记前序词" : "仅跳转",
+                                style: TextStyle(
+                                  color: accent,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
-                              subtitle: Text(
-                                word.means?.join("；") ?? "",
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                widget.markPreviousLearned
+                                    ? "目标前的未学词不会计入今日复习"
+                                    : "不修改学习进度",
+                                style: TextStyle(color: muted, fontSize: 12),
                               ),
-                              trailing:
-                                  const Icon(Icons.keyboard_return_rounded),
-                              onTap: () => Navigator.of(context).pop(word),
-                            );
-                          },
+                            ),
+                          ],
                         ),
-            ),
-          ],
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: Get.back,
+                    icon: Icon(Icons.close_rounded, color: muted),
+                    tooltip: "关闭",
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              TextField(
+                controller: _searchController,
+                autofocus: true,
+                onChanged: _onQueryChanged,
+                style: TextStyle(color: text),
+                decoration: InputDecoration(
+                  hintText: "输入英文或中文释义",
+                  hintStyle: TextStyle(color: muted),
+                  prefixIcon: Icon(Icons.search_rounded, color: muted),
+                  suffixIcon: _query.isEmpty
+                      ? null
+                      : IconButton(
+                          onPressed: () {
+                            _searchController.clear();
+                            _onQueryChanged('');
+                          },
+                          icon: Icon(Icons.close_rounded, color: muted),
+                          tooltip: "清空",
+                        ),
+                  filled: true,
+                  fillColor: panel,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 15),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide(color: border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide(color: border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide(color: accent, width: 1.5),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (_query.isNotEmpty && _results.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      "找到 ${_results.length} 个结果",
+                      style: TextStyle(color: muted, fontSize: 12),
+                    ),
+                  ),
+                ),
+              Expanded(
+                child: _query.isEmpty
+                    ? _JumpSearchEmpty(
+                        icon: Icons.manage_search_rounded,
+                        title: "搜索当前学习列表",
+                        subtitle: "支持单词拼写和中文释义",
+                        color: muted,
+                      )
+                    : _results.isEmpty
+                        ? _JumpSearchEmpty(
+                            icon: Icons.search_off_rounded,
+                            title: "没有匹配的单词",
+                            subtitle: "换一个关键词再试",
+                            color: muted,
+                          )
+                        : ListView.separated(
+                            keyboardDismissBehavior:
+                                ScrollViewKeyboardDismissBehavior.onDrag,
+                            itemCount: _results.length,
+                            separatorBuilder: (_, __) =>
+                                Divider(height: 1, color: border),
+                            itemBuilder: (context, index) {
+                              final word = _results[index];
+                              return InkWell(
+                                borderRadius: BorderRadius.circular(14),
+                                onTap: () => Navigator.of(context).pop(word),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 13,
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        width: 34,
+                                        height: 34,
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          color: accent.withOpacity(0.1),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                        ),
+                                        child: Text(
+                                          "${index + 1}",
+                                          style: TextStyle(
+                                            color: accent,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              word.word ?? "",
+                                              style: TextStyle(
+                                                color: text,
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              word.means?.join("；") ?? "",
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                color: muted,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      Icon(
+                                        Icons.arrow_forward_rounded,
+                                        color: muted,
+                                        size: 19,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+              ),
+            ],
+          ),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text("取消"),
-        ),
-      ],
+    );
+  }
+}
+
+class _JumpSearchEmpty extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+
+  const _JumpSearchEmpty({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 46, color: color.withOpacity(0.55)),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            style: TextStyle(
+              color: color,
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(subtitle, style: TextStyle(color: color, fontSize: 12)),
+        ],
+      ),
     );
   }
 }

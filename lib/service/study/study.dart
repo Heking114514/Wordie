@@ -904,19 +904,20 @@ class StudyService {
 
   Future<int> markWordsLearned(Iterable<String> wordIds) async {
     var changed = 0;
+    // Bulk jump overrides represent already-known words, not words studied today.
+    final beforeToday = getDayStartTime() - 1;
     for (final wordId in wordIds.toSet()) {
       if (wordId.isEmpty) continue;
       final wordKey = '${appService.bookId}_$wordId';
       final existing = await wordDao.queryWordStatus(wordKey);
-      final now = DateTime.now().millisecondsSinceEpoch;
       if (existing == null) {
         await wordDao.createWordStatus(WordStatusPO(
           word: wordKey,
           status: 1,
           studyCycle: 1,
           nextReviewTime: 0,
-          createTime: now,
-          updateTime: now,
+          createTime: beforeToday,
+          updateTime: beforeToday,
         ));
         changed++;
         continue;
@@ -926,7 +927,7 @@ class StudyService {
       existing.status = 1;
       existing.studyCycle = max(1, existing.studyCycle ?? 0);
       existing.nextReviewTime = 0;
-      existing.updateTime = now;
+      existing.updateTime = beforeToday;
       await wordDao.updateStatus(existing);
       changed++;
     }

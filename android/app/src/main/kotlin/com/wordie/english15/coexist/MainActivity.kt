@@ -5,26 +5,35 @@ import android.app.Activity
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.provider.CalendarContract
+import android.provider.Settings
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 import java.util.Calendar
 import java.util.TimeZone
 
 class MainActivity: FlutterActivity() {
     private val CALENDAR_CHANNEL = "com.wordie.english15.coexist/calendar"
     private val FILES_CHANNEL = "com.wordie.english15.coexist/files"
+    private val UPDATE_CHANNEL = "com.wordie.english15.coexist/update"
     private val PERM_REQ_CODE = 1001
     private val CREATE_BACKUP_REQUEST = 2001
     private val OPEN_BACKUP_REQUEST = 2002
+    private val INSTALL_PERMISSION_REQUEST = 3001
     private var pendingResult: MethodChannel.Result? = null
     private var pendingCallArgs: Map<String, Any?>? = null
     private var pendingAction: String = ""
     private var fileResult: MethodChannel.Result? = null
     private var pendingBackupText: String? = null
+    private var pendingInstallResult: MethodChannel.Result? = null
+    private var pendingInstallPath: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -60,6 +69,90 @@ class MainActivity: FlutterActivity() {
                 pendingBackupText = null
                 result.error("FILE_CHANNEL", error.message, null)
             }
+        }
+
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, UPDATE_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "getVersionName" -> {
+                    try {
+                        @Suppress("DEPRECATION")
+                        val versionName = packageManager.getPackageInfo(packageName, 0).versionName
+                        result.success(versionName)
+                    } catch (error: Exception) {
+                        result.error("VERSION_NAME", error.message, null)
+                    }
+                }
+                "installApk" -> {
+                    val args = call.arguments as? Map<String, Any?>
+                    val path = args?.get("path") as? String
+                    if (path.isNullOrBlank()) {
+                        result.error("INVALID_PATH", "APK 路径为空", null)
+                    } else {
+                        requestApkInstall(path, result)
+                    }
+                }
+                else -> result.notImplemented()
+            }
+        }
+    }
+
+    private fun requestApkInstall(path: String, result: MethodChannel.Result) {
+        if (pendingInstallResult != null) {
+            result.error("BUSY", "已有安装操作正在进行", null)
+            return
+        }
+
+        try {
+            resolveUpdateApk(path)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                !packageManager.canRequestPackageInstalls()
+            ) {
+                pendingInstallResult = result
+                pendingInstallPath = path
+                val settingsIntent = Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:$packageName")
+                )
+                startActivityForResult(settingsIntent, INSTALL_PERMISSION_REQUEST)
+            } else {
+                launchApkInstaller(path, result)
+            }
+        } catch (error: Exception) {
+            pendingInstallResult = null
+            pendingInstallPath = null
+            result.error("INSTALL_APK", error.message, null)
+        }
+    }
+
+    private fun resolveUpdateApk(path: String): File {
+        val updatesDirectory = File(cacheDir, "updates").canonicalFile
+        val apk = File(path).canonicalFile
+        val updatesPrefix = updatesDirectory.path + File.separator
+        if (!apk.path.startsWith(updatesPrefix) ||
+            !apk.isFile ||
+            !apk.name.endsWith(".apk", ignoreCase = true)
+        ) {
+            throw IllegalArgumentException("APK 必须位于缓存 updates 目录")
+        }
+        return apk
+    }
+
+    private fun launchApkInstaller(path: String, result: MethodChannel.Result) {
+        try {
+            val apk = resolveUpdateApk(path)
+            val apkUri = FileProvider.getUriForFile(
+                this,
+                "$packageName.fileprovider",
+                apk
+            )
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(installIntent)
+            result.success(true)
+        } catch (error: Exception) {
+            result.error("INSTALL_APK", error.message, null)
         }
     }
 
@@ -107,6 +200,23 @@ class MainActivity: FlutterActivity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == INSTALL_PERMISSION_REQUEST) {
+            val result = pendingInstallResult
+            val path = pendingInstallPath
+            pendingInstallResult = null
+            pendingInstallPath = null
+            if (result == null) return
+            if (path == null) {
+                result.error("INVALID_PATH", "待安装的 APK 路径为空", null)
+            } else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                packageManager.canRequestPackageInstalls()
+            ) {
+                launchApkInstaller(path, result)
+            } else {
+                result.error("INSTALL_PERMISSION_DENIED", "未授予安装未知来源应用权限", null)
+            }
+            return
+        }
         if (requestCode != CREATE_BACKUP_REQUEST && requestCode != OPEN_BACKUP_REQUEST) {
             return
         }

@@ -5,9 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../controller/profile/profile_controller.dart';
+import '../../controller/update/update_controller.dart';
 
 class ProfilePage extends GetView<ProfileController> {
   const ProfilePage({Key? key}) : super(key: key);
+
+  UpdateController get updateController => Get.find<UpdateController>();
 
   // ---------------- 动态色彩映射（CSS 变量深度适配） ----------------
   Color get bgColor => controller.isDarkMode.value
@@ -142,6 +145,19 @@ class ProfilePage extends GetView<ProfileController> {
                         activeColor: const Color(0xFF10B981),
                         onChanged: controller.toggleAutoPlay),
                   ),
+                  Obx(
+                    () => _buildSettingItem(
+                      icon: Icons.system_update_alt_rounded,
+                      iconColor: const Color(0xFF0EA5E9),
+                      iconBg: const Color(0xFFF0F9FF),
+                      title: "自动检查更新",
+                      trailing: CupertinoSwitch(
+                        value: updateController.autoCheckUpdate.value,
+                        activeColor: primaryColor,
+                        onChanged: updateController.setAutoCheckUpdate,
+                      ),
+                    ),
+                  ),
                 ]),
 
                 // 4. 数据管理组
@@ -203,12 +219,36 @@ class ProfilePage extends GetView<ProfileController> {
                 // 5. 关于项目
                 _buildSectionLabel("关于项目"),
                 _buildSettingsGroup([
+                  Obx(
+                    () => _buildSettingItem(
+                      icon: Icons.update_rounded,
+                      iconColor: const Color(0xFF14B8A6),
+                      iconBg: const Color(0xFFF0FDFA),
+                      title: "检查更新",
+                      subtitle: "${updateController.currentVersionLabel} · "
+                          "${updateController.checkStatus.value}",
+                      trailing: updateController.isChecking.value
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(
+                              Icons.chevron_right,
+                              size: 18,
+                              color: textMuted,
+                            ),
+                      onTap: updateController.isChecking.value
+                          ? null
+                          : updateController.checkAndPrompt,
+                    ),
+                  ),
                   _buildSettingItem(
                     icon: Icons.code_rounded,
                     iconColor: const Color(0xFF64748B),
                     iconBg: const Color(0xFFF8FAFC),
                     title: "版本信息",
-                    trailing: Text("v2.1.1 (Coexist)",
+                    trailing: Text("v2.2.0 (Coexist)",
                         style: TextStyle(fontSize: 13, color: textMuted)),
                     onTap: () => controller.onVersionClick(),
                   ),
