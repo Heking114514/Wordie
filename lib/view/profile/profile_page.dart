@@ -248,7 +248,7 @@ class ProfilePage extends GetView<ProfileController> {
                     iconColor: const Color(0xFF64748B),
                     iconBg: const Color(0xFFF8FAFC),
                     title: "版本信息",
-                    trailing: Text("v2.2.0 (Coexist)",
+                    trailing: Text("v2.2.1 (Coexist)",
                         style: TextStyle(fontSize: 13, color: textMuted)),
                     onTap: () => controller.onVersionClick(),
                   ),

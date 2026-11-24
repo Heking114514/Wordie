@@ -117,10 +117,34 @@ class StudyPage extends GetView<StudyController> {
               if (controller.isDifficultMode.value) {
                 return const SizedBox.shrink();
               }
-              return IconButton(
+              final isReview = (Get.parameters['mode'] ?? 'new') == 'review';
+              return PopupMenuButton<String>(
                 tooltip: "更多操作",
                 icon: const Icon(Icons.more_horiz_rounded),
-                onPressed: () => _showJumpActions(context),
+                position: PopupMenuPosition.under,
+                offset: const Offset(-8, 6),
+                color: Colors.transparent,
+                elevation: 0,
+                constraints: const BoxConstraints.tightFor(width: 330),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                itemBuilder: (_) => [
+                  PopupMenuItem<String>(
+                    enabled: false,
+                    padding: EdgeInsets.zero,
+                    child: _JumpMenuPanel(showBulkLearn: !isReview),
+                  ),
+                ],
+                onSelected: (action) async {
+                  await Future<void>.delayed(
+                    const Duration(milliseconds: 120),
+                  );
+                  await _openWordJumpSearch(
+                    context,
+                    markPreviousLearned: action == 'learn',
+                  );
+                },
               );
             }),
           ],
@@ -308,23 +332,6 @@ class StudyPage extends GetView<StudyController> {
           ),
         ),
       ),
-    );
-  }
-
-  Future<void> _showJumpActions(BuildContext context) async {
-    final isReview = (Get.parameters['mode'] ?? 'new') == 'review';
-    final action = await Get.bottomSheet<String>(
-      _JumpActionsSheet(showBulkLearn: !isReview),
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      barrierColor: Colors.black54,
-      enableDrag: true,
-    );
-    if (action == null) return;
-    await Future<void>.delayed(const Duration(milliseconds: 180));
-    await _openWordJumpSearch(
-      context,
-      markPreviousLearned: action == 'learn',
     );
   }
 
@@ -1718,136 +1725,126 @@ class StudyPage extends GetView<StudyController> {
   }
 }
 
-class _JumpActionsSheet extends StatelessWidget {
+class _JumpMenuPanel extends StatelessWidget {
   final bool showBulkLearn;
 
-  const _JumpActionsSheet({required this.showBulkLearn});
+  const _JumpMenuPanel({required this.showBulkLearn});
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final bg = isDark ? const Color(0xFF111827) : Colors.white;
+    final bg = isDark ? const Color(0xFF172033) : Colors.white;
     final text = isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1E293B);
     final muted = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
-    final divider = isDark ? const Color(0xFF263244) : const Color(0xFFE8EDF5);
+    final divider = isDark ? const Color(0xFF2A3548) : const Color(0xFFE8EDF5);
 
-    return SafeArea(
-      top: false,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
-        decoration: BoxDecoration(
-          color: bg,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(26)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 42,
-              height: 4,
-              decoration: BoxDecoration(
-                color: muted.withOpacity(0.35),
-                borderRadius: BorderRadius.circular(4),
+    return Container(
+      width: 330,
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 7),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: divider),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? 0.35 : 0.16),
+            blurRadius: 24,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 5, 10, 7),
+            child: Text(
+              "单词跳转",
+              style: TextStyle(
+                color: muted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.8,
               ),
             ),
-            const SizedBox(height: 18),
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "单词跳转",
-                        style: TextStyle(
-                          color: text,
-                          fontSize: 21,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        "选择跳转后如何处理前面的单词",
-                        style: TextStyle(color: muted, fontSize: 13),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  onPressed: Get.back,
-                  icon: Icon(Icons.close_rounded, color: muted),
-                  tooltip: "关闭",
-                ),
-              ],
+          ),
+          _JumpMenuRow(
+            icon: Icons.search_rounded,
+            iconColor: const Color(0xFF3B82F6),
+            iconBackground:
+                isDark ? const Color(0xFF162A4A) : const Color(0xFFEFF6FF),
+            title: "仅搜索跳转单词",
+            subtitle: "只定位单词，不修改学习进度",
+            textColor: text,
+            mutedColor: muted,
+            onTap: () => Navigator.of(context).pop('jump'),
+          ),
+          if (showBulkLearn) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Divider(height: 1, color: divider),
             ),
-            const SizedBox(height: 14),
-            _JumpActionRow(
-              icon: Icons.search_rounded,
-              iconColor: const Color(0xFF3B82F6),
-              iconBackground: const Color(0xFFEFF6FF),
-              title: "仅搜索跳转单词",
-              subtitle: "定位到目标词，不修改任何学习进度",
-              onTap: () => Get.back(result: 'jump'),
+            _JumpMenuRow(
+              icon: Icons.playlist_add_check_circle_rounded,
+              iconColor: const Color(0xFF10B981),
+              iconBackground:
+                  isDark ? const Color(0xFF12372F) : const Color(0xFFECFDF5),
+              title: "跳转并标记前序词",
+              subtitle: "前序未学词置为已学，不计入今日复习量",
+              textColor: text,
+              mutedColor: muted,
+              onTap: () => Navigator.of(context).pop('learn'),
             ),
-            if (showBulkLearn) ...[
-              Divider(height: 1, color: divider),
-              _JumpActionRow(
-                icon: Icons.playlist_add_check_circle_rounded,
-                iconColor: const Color(0xFF10B981),
-                iconBackground: const Color(0xFFECFDF5),
-                title: "跳转并标记前序词",
-                subtitle: "前面的未学词置为已学，不计入今日复习量",
-                onTap: () => Get.back(result: 'learn'),
-              ),
-            ],
           ],
-        ),
+        ],
       ),
     );
   }
 }
 
-class _JumpActionRow extends StatelessWidget {
+class _JumpMenuRow extends StatelessWidget {
   final IconData icon;
   final Color iconColor;
   final Color iconBackground;
   final String title;
   final String subtitle;
+  final Color textColor;
+  final Color mutedColor;
   final VoidCallback onTap;
 
-  const _JumpActionRow({
+  const _JumpMenuRow({
     required this.icon,
     required this.iconColor,
     required this.iconBackground,
     required this.title,
     required this.subtitle,
+    required this.textColor,
+    required this.mutedColor,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final text = isDark ? const Color(0xFFF8FAFC) : const Color(0xFF1E293B);
-    final muted = isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
     return Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(13),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 15, horizontal: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
           child: Row(
             children: [
               Container(
-                width: 46,
-                height: 46,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
                   color: iconBackground,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(icon, color: iconColor, size: 24),
+                child: Icon(icon, color: iconColor, size: 21),
               ),
-              const SizedBox(width: 15),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1855,25 +1852,25 @@ class _JumpActionRow extends StatelessWidget {
                     Text(
                       title,
                       style: TextStyle(
-                        color: text,
-                        fontSize: 16,
+                        color: textColor,
+                        fontSize: 14.5,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 2),
                     Text(
                       subtitle,
                       style: TextStyle(
-                        color: muted,
-                        fontSize: 12,
-                        height: 1.35,
+                        color: mutedColor,
+                        fontSize: 11.5,
+                        height: 1.3,
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 10),
-              Icon(Icons.chevron_right_rounded, color: muted, size: 22),
+              const SizedBox(width: 8),
+              Icon(Icons.chevron_right_rounded, color: mutedColor, size: 20),
             ],
           ),
         ),
