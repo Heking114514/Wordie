@@ -316,6 +316,23 @@ class AppService {
       await storage.write('custom_books', customBooks);
       await wordService.loadCustomBooks();
       await insertCustomBookToDb(bookName);
+
+      final bookId = int.tryParse(
+            storage.read('book_id_$bookName')?.toString() ?? '',
+          ) ??
+          0;
+      final wordId = getWordBySpell(normalizedSpell)?.id ?? normalizedSpell;
+      if (bookId != 0) {
+        await wordDao.deleteBookWord(bookId, wordId);
+        await wordDao.deleteWordStatus(bookId, wordId);
+        if (normalizedSpell != wordId) {
+          await wordDao.deleteWordStatus(bookId, normalizedSpell);
+        }
+        await wordService.removeWordFromDifficultBook(
+          normalizedSpell,
+          bookId: bookId.toString(),
+        );
+      }
       return true;
     });
   }
@@ -323,17 +340,46 @@ class AppService {
   Future<void> deleteCustomBook(String bookName, int bookId) {
     return _serializeCustomBookWrite(() async {
       final storage = GetStorage();
-      final customBooks = Map<String, dynamic>.from(
+      final originalCustomBooks = Map<String, dynamic>.from(
         storage.read('custom_books') ?? <String, dynamic>{},
       );
-      customBooks.remove(bookName);
-      await storage.write('custom_books', customBooks);
-      await storage.remove('book_id_$bookName');
-      await wordDao.clearBookProgressAll(bookId);
-      await wordDao.deleteBookWords(bookId);
-      await clearReviewState(bookId, clearStats: true, clearPreferences: true);
-      wordService.bookMap.remove(bookName);
-      await wordService.loadCustomBooks();
+      final originalBookId = storage.read('book_id_$bookName');
+      final updatedCustomBooks = Map<String, dynamic>.from(originalCustomBooks)
+        ..remove(bookName);
+
+      try {
+        await storage.write('custom_books', updatedCustomBooks);
+        await storage.remove('book_id_$bookName');
+        await wordDao.clearBookProgressAll(bookId);
+        await wordDao.deleteBookWords(bookId);
+        await clearReviewState(
+          bookId,
+          clearStats: true,
+          clearPreferences: true,
+        );
+        await wordService.clearDifficultWordsForBook(bookId.toString());
+        for (final rawKey in storage.getKeys()) {
+          if (rawKey == null) continue;
+          final key = rawKey.toString();
+          if (key == 'study_mode_$bookId' ||
+              key == 'book_order_$bookId' ||
+              key.startsWith('study_cursor_${bookId}_') ||
+              key.startsWith('saved_queue_${bookId}_') ||
+              key == 'deleted_system_words_$bookId') {
+            await storage.remove(key);
+          }
+        }
+        wordService.bookMap.remove(bookName);
+        await wordService.loadCustomBooks();
+      } catch (_) {
+        await storage.write('custom_books', originalCustomBooks);
+        if (originalBookId != null) {
+          await storage.write('book_id_$bookName', originalBookId);
+        }
+        await wordService.loadCustomBooks();
+        await insertCustomBookToDb(bookName);
+        rethrow;
+      }
     });
   }
 
@@ -350,6 +396,8 @@ class AppService {
       'review_batch_key_$bookId',
       'review_batch_pos_$bookId',
       'review_batch_selected_$bookId',
+      'review_next_batch_$bookId',
+      'review_opened_at_$bookId',
       'review_queue_$bookId',
       'review_passed_$bookId',
       'ai_article_cache_$bookId',
@@ -362,6 +410,66 @@ class AppService {
     }
     for (final key in keys) {
       await storage.remove(key);
+    }
+  }
+
+  Future<void> _removeWordFromReviewState(
+    int bookId,
+    String wordId,
+    String spelling,
+  ) async {
+    final storage = GetStorage();
+    final keysToRemove = <String>{
+      wordId.trim().toLowerCase(),
+      spelling.trim().toLowerCase(),
+    }..removeWhere((value) => value.isEmpty);
+    if (keysToRemove.isEmpty) return;
+
+    bool matches(dynamic value) {
+      return keysToRemove.contains(value.toString().trim().toLowerCase());
+    }
+
+    var activeChanged = false;
+    final batch = storage.read('review_batch_$bookId');
+    if (batch is List) {
+      final oldPosition =
+          int.tryParse('${storage.read('review_batch_pos_$bookId') ?? 0}') ?? 0;
+      final safePosition = oldPosition.clamp(0, batch.length).toInt();
+      final removedBefore = batch.take(safePosition).where(matches).length;
+      final updated = batch.where((value) => !matches(value)).toList();
+      activeChanged = updated.length != batch.length;
+      if (activeChanged) {
+        await storage.write('review_batch_$bookId', updated);
+        await storage.write(
+          'review_batch_pos_$bookId',
+          (oldPosition - removedBefore).clamp(0, updated.length).toInt(),
+        );
+      }
+    }
+
+    for (final key in <String>[
+      'review_batch_selected_$bookId',
+      'review_next_batch_$bookId',
+      'review_round_done_$bookId',
+    ]) {
+      final raw = storage.read(key);
+      if (raw is! List) continue;
+      final updated = raw.where((value) => !matches(value)).toList();
+      if (updated.length != raw.length) {
+        await storage.write(key, updated);
+      }
+    }
+
+    final rawStats = storage.read('review_word_stats_$bookId');
+    if (rawStats is Map) {
+      final stats = Map<String, dynamic>.from(rawStats);
+      stats.removeWhere((key, _) => matches(key));
+      await storage.write('review_word_stats_$bookId', stats);
+    }
+
+    if (activeChanged) {
+      await storage.remove('review_batch_key_$bookId');
+      await storage.remove('ai_article_cache_$bookId');
     }
   }
 
@@ -439,6 +547,9 @@ class AppService {
     reviewDailyCount =
         int.parse((storage.read("study.reviewDailyCount") ?? "50").toString());
     autoPlayVoice = storage.read('auto_play') ?? true;
+    if (_bookName is String && wordService.bookMap.containsKey(_bookName)) {
+      wordService.activateDifficultBook(getBookId(_bookName));
+    }
   }
 
   Word? getWord(String? id) {
@@ -481,7 +592,214 @@ class AppService {
 
   void selectBook(String bookName) {
     _bookName = bookName;
+    wordService.activateDifficultBook(getBookId(bookName));
     saveOptions();
+  }
+
+  Future<WordPoolSnapshot> loadWordPool(String bookName) async {
+    await wordService.loadWords();
+    final book = wordService.bookMap[bookName];
+    final parsedBookId = int.tryParse(book?.id ?? '');
+    if (book == null || parsedBookId == null) {
+      return const WordPoolSnapshot(
+        ordinaryWords: <Word>[],
+        familiarWords: <Word>[],
+        difficultWords: <Word>[],
+      );
+    }
+
+    final sourceRows = await wordDao.queryWords(parsedBookId);
+    final sourceWords = <Word>[];
+    for (final row in sourceRows) {
+      final wordId = row.word;
+      if (wordId == null || wordId.isEmpty) continue;
+      final source = getWord(wordId) ?? getWordBySpell(wordId);
+      sourceWords.add(Word(
+        id: wordId,
+        word: source?.word ?? wordId,
+        usVoice: source?.usVoice,
+        ukVoice: source?.ukVoice,
+        means: source?.means,
+        helper: source?.helper,
+        sentences: source?.sentences,
+      ));
+    }
+
+    final statuses = await wordDao.queryWordStatusByBook(parsedBookId);
+    final familiarKeys = statuses
+        .where((status) => status.status == -1 && status.word != null)
+        .map((status) => _wordIdFromStatusKey(
+              status.word!,
+              parsedBookId,
+            ))
+        .where((wordId) => wordId.isNotEmpty);
+    return WordPoolSnapshot.fromWords(
+      sourceWords: sourceWords,
+      familiarKeys: familiarKeys,
+      difficultSpellings: wordService.getDifficultWords(bookId: book.id),
+      deletedKeys: wordService.deletedSystemWordSpellings(book.id!),
+    );
+  }
+
+  String _wordIdFromStatusKey(String statusKey, int targetBookId) {
+    final prefix = '${targetBookId}_';
+    return statusKey.startsWith(prefix)
+        ? statusKey.substring(prefix.length)
+        : statusKey;
+  }
+
+  String? _wordSpelling(String? wordId) {
+    if (wordId == null || wordId.isEmpty) return null;
+    final word = getWord(wordId) ?? getWordBySpell(wordId);
+    final spelling = word?.word?.trim();
+    if (spelling != null && spelling.isNotEmpty) return spelling;
+    final normalized = wordId.trim();
+    return normalized.isEmpty ? null : normalized;
+  }
+
+  Future<bool> markWordFamiliar(
+    String? wordId, {
+    String? bookName,
+  }) async {
+    final targetBookName = bookName ?? this.bookName;
+    final targetBookId =
+        int.tryParse(wordService.bookMap[targetBookName]?.id ?? '') ?? 0;
+    final spelling = _wordSpelling(wordId);
+    if (wordId == null ||
+        wordId.isEmpty ||
+        targetBookId == 0 ||
+        spelling == null) {
+      return false;
+    }
+    await wordDao.markWordFamiliarById(wordId, targetBookId);
+    await wordService.removeWordFromDifficultBook(
+      spelling,
+      bookId: targetBookId.toString(),
+    );
+    await _removeWordFromReviewState(targetBookId, wordId, spelling);
+    return true;
+  }
+
+  /// Permanently removes a word from this book's source.
+  ///
+  /// Custom books update custom_books, SQLite and the in-memory Book together.
+  /// System books cannot mutate the bundled dictionary, so their SQLite source
+  /// row is removed and a per-book deletion overlay keeps the word hidden after
+  /// a reload.
+  Future<bool> deleteWord(
+    String? wordId, {
+    String? bookName,
+  }) async {
+    final targetBookName = bookName ?? this.bookName;
+    final book = wordService.bookMap[targetBookName];
+    final targetBookId = int.tryParse(book?.id ?? '') ?? 0;
+    final spelling = _wordSpelling(wordId);
+    if (wordId == null ||
+        wordId.isEmpty ||
+        targetBookId == 0 ||
+        spelling == null) {
+      return false;
+    }
+
+    final deleted = wordService.customBookNames.contains(targetBookName)
+        ? await _serializeCustomBookWrite(
+            () => _deleteCustomBookWord(
+              targetBookName,
+              targetBookId,
+              wordId,
+              spelling,
+            ),
+          )
+        : await _deleteSystemBookWord(
+            targetBookName,
+            targetBookId,
+            wordId,
+            spelling,
+          );
+    if (deleted) {
+      await _removeWordFromReviewState(targetBookId, wordId, spelling);
+    }
+    return deleted;
+  }
+
+  Future<bool> _deleteCustomBookWord(
+    String bookName,
+    int bookId,
+    String wordId,
+    String spelling,
+  ) async {
+    final storage = GetStorage();
+    final originalCustomBooks = Map<String, dynamic>.from(
+      storage.read('custom_books') ?? <String, dynamic>{},
+    );
+    final updatedCustomBooks = Map<String, dynamic>.from(originalCustomBooks);
+    final words = List<String>.from(originalCustomBooks[bookName] ?? const []);
+    final matchesWord = words.any(
+      (word) => word.trim().toLowerCase() == spelling.trim().toLowerCase(),
+    );
+    if (!matchesWord) return false;
+    words.removeWhere(
+      (word) => word.trim().toLowerCase() == spelling.trim().toLowerCase(),
+    );
+
+    try {
+      updatedCustomBooks[bookName] = _normalizeCustomBookWords(words);
+      await storage.write('custom_books', updatedCustomBooks);
+      await wordService.loadCustomBooks();
+      await insertCustomBookToDb(bookName);
+      await wordDao.deleteBookWord(bookId, wordId);
+      await wordDao.deleteWordStatus(bookId, wordId);
+      if (spelling != wordId) {
+        await wordDao.deleteWordStatus(bookId, spelling);
+      }
+      await wordService.removeWordFromDifficultBook(
+        spelling,
+        bookId: bookId.toString(),
+      );
+      return true;
+    } catch (_) {
+      await storage.write('custom_books', originalCustomBooks);
+      await wordService.loadCustomBooks();
+      await insertCustomBookToDb(bookName);
+      rethrow;
+    }
+  }
+
+  Future<bool> _deleteSystemBookWord(
+    String bookName,
+    int bookId,
+    String wordId,
+    String spelling,
+  ) async {
+    final book = wordService.bookMap[bookName];
+    if (book == null) return false;
+
+    await wordService.hideSystemWord(bookId.toString(), spelling);
+    try {
+      await wordDao.deleteBookWord(bookId, wordId);
+      await wordDao.deleteWordStatus(bookId, wordId);
+      if (spelling != wordId) {
+        await wordDao.deleteWordStatus(bookId, spelling);
+      }
+    } catch (_) {
+      // The persisted per-book overlay still hides the word; startup retries DB
+      // cleanup when WordService loads the bundled source again.
+    }
+    try {
+      await wordService.removeWordFromDifficultBook(
+        spelling,
+        bookId: bookId.toString(),
+      );
+    } catch (_) {
+      // The source is already hidden; stale difficult metadata is harmless.
+    }
+    book.words?.removeWhere((word) {
+      final sameId = word.id == wordId;
+      final sameSpelling =
+          word.word?.trim().toLowerCase() == spelling.trim().toLowerCase();
+      return sameId || sameSpelling;
+    });
+    return true;
   }
 
   Future<bool?> queryWordDeleteStatus(String? word) async {
@@ -490,8 +808,13 @@ class AppService {
     return status?.status == -1;
   }
 
-  Future<void> deleteWord(String? wordId) async =>
-      await wordDao.markWordFamiliarById(wordId, bookId);
-  Future<void> restoreWord(String? wordId) async =>
-      await wordDao.restoreWordForStudy(wordId, bookId);
+  Future<void> restoreWord(
+    String? wordId, {
+    String? bookName,
+  }) async {
+    final targetBookId = int.tryParse(
+            wordService.bookMap[bookName ?? this.bookName]?.id ?? '') ??
+        bookId;
+    await wordDao.restoreWordForStudy(wordId, targetBookId);
+  }
 }

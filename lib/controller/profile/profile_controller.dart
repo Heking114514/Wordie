@@ -11,6 +11,7 @@ import '../../dao/word/word.dart';
 import '../../service/ai/openai_responses.dart';
 import '../../service/app/app.dart';
 import '../../service/backup/account_backup.dart';
+import '../../service/word/word.dart';
 import '../home/home_v2.dart';
 import '../main/main_controller.dart';
 import '../selectBook/selectBook.dart';
@@ -435,23 +436,11 @@ class ProfileController extends GetxController {
     Get.back();
 
     try {
-      var book = appService.wordService.bookMap[bookName];
-      if (book == null || book.words == null || book.words!.isEmpty)
-        throw "词书为空";
-
-      StringBuffer buffer = StringBuffer();
-      int skipped = 0;
-      for (var w in book.words!) {
-        // 跳过已标记为熟词（status == -1）的单词
-        String wordKey = "${book.id}_${w.id}";
-        var status = await wordDao.queryWordStatus(wordKey);
-        if (status != null && status.status == -1) {
-          skipped++;
-          continue;
-        }
-        String means = w.means?.replaceAll('\n', ' ') ?? '暂无释义';
-        buffer.writeln("${w.word}\t$means");
-      }
+      final pool = await appService.loadWordPool(bookName);
+      final words = pool.wordsFor(WordPoolType.ordinary);
+      if (words.isEmpty) throw "词书为空";
+      final buffer = StringBuffer(DifficultWordStore.buildTxt(words));
+      final familiarCount = pool.countFor(WordPoolType.familiar);
 
       String safeFileName = fileName.isEmpty ? "词库" : fileName;
       Get.dialog(const Center(child: CircularProgressIndicator()),
@@ -465,7 +454,7 @@ class ProfileController extends GetxController {
 
         Get.back();
         String msg = "文件已成功导出至安全目录：\n$finalPath\n您可以去文件管理器查看此文件。";
-        if (skipped > 0) msg += "\n（已排除 $skipped 个熟词）";
+        if (familiarCount > 0) msg += "\n（熟词库已单独保留，未混入普通词）";
         Get.snackbar("导出成功", msg, duration: const Duration(seconds: 8));
       } else {
         String? outputFile = await FilePicker.platform.saveFile(
@@ -479,7 +468,7 @@ class ProfileController extends GetxController {
           await File(outputFile).writeAsString(buffer.toString());
           Get.back();
           String msg = "文件已成功保存至：\n$outputFile";
-          if (skipped > 0) msg += "\n（已排除 $skipped 个熟词）";
+          if (familiarCount > 0) msg += "\n（熟词库已单独保留，未混入普通词）";
           Get.snackbar("导出成功", msg);
         } else {
           Get.back();

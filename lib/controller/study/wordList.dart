@@ -81,7 +81,7 @@ class WordListController extends GetxController {
         title.value = "已学习(PASS) · ${passList.value.length}";
         break;
       case 2:
-        title.value = "熟词(已删除) · ${deleteList.value.length}";
+        title.value = "熟词库 · ${deleteList.value.length}";
         break;
       case 3:
         title.value = "全部单词 · ${allList.value.length}";
@@ -109,14 +109,32 @@ class WordListController extends GetxController {
     return false;
   }
 
-  /// 设为熟词：删除单词
-  Future<void> deleteWord(WordVO word) async {
+  /// 熟词操作：退出学习/复习，但保留在当前词书的熟词库。
+  Future<void> deleteWord(WordVO word) => markFamiliar(word);
+
+  Future<void> markFamiliar(WordVO word) async {
     StudyController studyController = Get.find();
     await studyController.markFamiliarFromWordList(word);
     word.isDelete = true;
   }
 
-  /// 重新学习：从删除数据库，恢复单词
+  /// 永久删除：从当前词书的词源中移除，而不是放进熟词库。
+  Future<bool> deleteWordPermanently(WordVO word) async {
+    final studyController = Get.find<StudyController>();
+    final deleted = await studyController.deleteWordPermanently(word);
+    if (deleted) {
+      word.isDelete = true;
+      passList.value =
+          passList.value.where((item) => item != word.word).toList();
+      allList.value =
+          allList.value.where((item) => item.wordId != word.wordId).toList();
+      deleteList.value =
+          deleteList.value.where((item) => item != word.word).toList();
+    }
+    return deleted;
+  }
+
+  /// 从熟词库恢复为待学习状态。
   Future<void> restoreWord(WordVO word) async {
     StudyController studyController = Get.find();
     await studyController.restoreWordFromWordList(word);

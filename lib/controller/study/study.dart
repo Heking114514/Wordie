@@ -16,6 +16,7 @@ import '../../entity/word/po/word.dart';
 import '../../dicts/reader.dart';
 import '../../util/audio.dart';
 import '../../util/dictionary.dart';
+import '../../util/time.dart';
 import '../../controller/selectBook/selectBook.dart';
 
 typedef Future<void> PlayCallback(Player player);
@@ -111,6 +112,9 @@ class StudyController extends GetxController with WidgetsBindingObserver {
   var word = Rx<WordVO?>(null);
   var dailyStudyCount = 0.obs;
   var reviewCount = 0.obs;
+  var nextReviewBatchCount = 0.obs;
+  var hasNextReviewBatch = false.obs;
+  var isAdvancingReviewBatch = false.obs;
   var thinking = false.obs;
   var playing = false.obs;
   var controlEnable = true.obs;
@@ -132,6 +136,7 @@ class StudyController extends GetxController with WidgetsBindingObserver {
   var isGeneratingArticle = false.obs;
   String _cachedArticleBatchKey = ""; // 标识当前缓存对应的复习批次
   CancelToken? _articleCancelToken;
+  bool _checkingDayBoundary = false;
 
   String get _articleStorageKey => 'ai_article_cache_${appService.bookId}';
   String get _manualStudyCursorKey =>
@@ -221,9 +226,27 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed) {
       timeRecord.recordStart();
+      _checkReviewDayBoundary();
     } else if (state == AppLifecycleState.paused) {
       stopPlay();
       timeRecord.recordEnd();
+    }
+  }
+
+  Future<void> _checkReviewDayBoundary() async {
+    if (_checkingDayBoundary || (Get.parameters['mode'] ?? 'new') != 'review') {
+      return;
+    }
+    _checkingDayBoundary = true;
+    try {
+      final storage = GetStorage();
+      final previousDay = storage.read('review_date_${appService.bookId}');
+      final today = getDayKey();
+      if (previousDay == null || previousDay == today) return;
+      await studyService.ensureTodayReviewState();
+      _init();
+    } finally {
+      _checkingDayBoundary = false;
     }
   }
 
@@ -238,6 +261,8 @@ class StudyController extends GetxController with WidgetsBindingObserver {
 
   void _init() async {
     isInitializing.value = true;
+    nextReviewBatchCount.value = 0;
+    hasNextReviewBatch.value = false;
     _articleCancelToken?.cancel('review batch changed');
     _articleCancelToken = null;
     isGeneratingArticle.value = false;
@@ -395,39 +420,33 @@ class StudyController extends GetxController with WidgetsBindingObserver {
   void reviewTodayAgain() async {
     await appService.clearReviewState(appService.bookId);
     await studyService.ensureTodayReviewState();
+    nextReviewBatchCount.value = 0;
+    hasNextReviewBatch.value = false;
     _init();
   }
 
-  // 今日所学的下一批（保留当天 roundDone）
-  void startNewReviewBatch() async {
-    final statuses = await studyService.fetchTodayReviewStatuses();
-    final roundDone = await studyService.normalizeReviewIds(
-      'review_round_done_${appService.bookId}',
-    );
-    final learnedIds = statuses
-        .map((status) {
-          final key = status.word ?? '';
-          final prefix = '${appService.bookId}_';
-          return key.startsWith(prefix) ? key.substring(prefix.length) : key;
-        })
-        .where((id) => id.isNotEmpty)
-        .toSet();
-
-    if (learnedIds.isEmpty) {
-      Get.snackbar("今日无需复习", "今天还没有学习新词，先去学一些吧");
-      Get.offAllNamed("/main");
-      return;
+  Future<void> startNewReviewBatch() async {
+    if (isAdvancingReviewBatch.value) return;
+    isAdvancingReviewBatch.value = true;
+    try {
+      final storage = GetStorage();
+      final cycles = storage.read('review_cycles_${appService.bookId}') ?? 3;
+      final target = storage.read('review_target_${appService.bookId}') ??
+          appService.reviewDailyCount;
+      final promoted = await studyService.promoteNextReviewQueue(
+        cycles: int.tryParse('$cycles') ?? 3,
+        targetCount: int.tryParse('$target') ?? appService.reviewDailyCount,
+      );
+      if (!promoted) {
+        _showReviewAllDoneDialog();
+        return;
+      }
+      nextReviewBatchCount.value = 0;
+      hasNextReviewBatch.value = false;
+      _init();
+    } finally {
+      isAdvancingReviewBatch.value = false;
     }
-    if (roundDone.toSet().containsAll(learnedIds)) {
-      _showReviewAllDoneDialog();
-      return;
-    }
-
-    GetStorage().remove('review_batch_${appService.bookId}');
-    GetStorage().remove('review_batch_key_${appService.bookId}');
-    GetStorage().remove('review_batch_pos_${appService.bookId}');
-    GetStorage().remove('review_batch_selected_${appService.bookId}');
-    _init();
   }
 
   void _showReviewAllDoneDialog() {
@@ -496,56 +515,22 @@ class StudyController extends GetxController with WidgetsBindingObserver {
   Future<void> fetchWords() async {
     String modeParam = Get.parameters['mode'] ?? 'new';
     if (modeParam == 'review') {
-      await studyService.ensureTodayReviewState();
-      // try to resume today's existing batch first
-      final rawSavedBatch = await studyService.normalizeReviewIds(
-        'review_batch_${appService.bookId}',
-        deduplicate: false,
-      );
-      bookWordStatusMap = await studyService.fetchBookWordStatusMap();
-      final savedBatch = rawSavedBatch
-          .where((wordId) => bookWordStatusMap[wordId]?.status == 1)
-          .toList();
-      if (savedBatch.length != rawSavedBatch.length) {
-        await GetStorage().write(
-          'review_batch_${appService.bookId}',
-          savedBatch,
-        );
-      }
-      final savedPos = int.tryParse(
-            '${GetStorage().read('review_batch_pos_${appService.bookId}') ?? 0}',
-          ) ??
-          0;
-      if (savedBatch.isNotEmpty) {
-        List<WordVO> batch = [];
-        for (var id in savedBatch) {
-          var wordData = appService.getWord(id);
-          if (wordData != null) {
-            var vo = appService.toWordVO(wordData);
-            if (vo != null) batch.add(vo);
-          }
-        }
-        if (batch.isNotEmpty) {
-          playingWords = batch;
-          if (savedPos < batch.length) {
-            // 未完成，恢复进度
-            playingIndex = savedPos;
-          } else {
-            // 已完成（pos >= length），直接显示结算界面
-            playingIndex = batch.length;
-            word.value = null;
-          }
-          return;
-        }
-      }
-      // create new batch
-      int target =
+      final target =
           GetStorage().read('review_target_${appService.bookId}') ?? 20;
-      int cycles = GetStorage().read('review_cycles_${appService.bookId}') ?? 3;
-      playingWords = await studyService.createReviewBatch(target, cycles);
+      final cycles =
+          GetStorage().read('review_cycles_${appService.bookId}') ?? 3;
+      final snapshot = await studyService.loadOrFreezeActiveReviewQueue(
+        targetCount: int.tryParse('$target') ?? 20,
+        cycles: int.tryParse('$cycles') ?? 3,
+      );
+      playingWords = snapshot.words;
+      playingIndex = snapshot.position;
+      reviewCount.value = snapshot.activeUniqueCount;
       _lastReviewRound = 1;
-      playingIndex = 0;
+      nextReviewBatchCount.value = snapshot.nextUniqueCount;
+      hasNextReviewBatch.value = snapshot.nextUniqueCount > 0;
       bookWordStatusMap = await studyService.fetchBookWordStatusMap();
+      if (snapshot.isCompleted) word.value = null;
     } else if (isManualMode.value) {
       playingWords = await studyService.fetchAllBookWords();
       bookWordStatusMap = await studyService.fetchBookWordStatusMap();
@@ -661,23 +646,36 @@ class StudyController extends GetxController with WidgetsBindingObserver {
   }
 
   Future<void> _completeReviewBatch() async {
-    final selected = await studyService.normalizeReviewIds(
+    var selected = await studyService.normalizeReviewIds(
       'review_batch_selected_${appService.bookId}',
     );
+    if (selected.isEmpty) {
+      selected = uniqueReviewIds(
+        playingWords.map((item) => item.wordId ?? ''),
+      );
+    }
     final roundDone = await studyService.normalizeReviewIds(
       'review_round_done_${appService.bookId}',
     );
-    for (var w in selected) {
-      if (!roundDone.contains(w)) roundDone.add(w);
+    for (final wordId in selected) {
+      if (!roundDone.contains(wordId)) roundDone.add(wordId);
     }
-    GetStorage().write('review_round_done_${appService.bookId}', roundDone);
-    // 保留 review_batch / review_batch_selected / review_batch_pos，
-    // 让用户退出重进时能恢复同一批次和 AI 文章
-    // review_batch_pos 设为 length 标识"已完毕"
-    GetStorage()
-        .write('review_batch_pos_${appService.bookId}', playingWords.length);
+    await GetStorage().write(
+      'review_round_done_${appService.bookId}',
+      roundDone,
+    );
+    // 保留当前活动词单、位置和批次键，重进时仍恢复同一批 AI 文章。
+    final storedActive = GetStorage().read('review_batch_${appService.bookId}');
+    final completedPosition =
+        storedActive is List ? storedActive.length : playingWords.length;
+    await GetStorage().write(
+      'review_batch_pos_${appService.bookId}',
+      completedPosition,
+    );
+    final nextCount = await studyService.refreshNextReviewQueue();
+    nextReviewBatchCount.value = nextCount;
+    hasNextReviewBatch.value = nextCount > 0;
 
-    // 不再弹对话框，而是设 word=null 触发 buildEndView 展示 AI 文章结算面板
     word.value = null;
   }
 
@@ -1139,25 +1137,18 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     }
   }
 
-  void delete() async {
+  void markCurrentWordFamiliar() async {
     if (!controlEnable.value) return;
     controlEnable.value = false;
     await stopPlay();
     var wId = word.value?.wordId;
 
     if (isDifficultMode.value) {
-      var w = word.value?.word;
-      if (w != null) {
-        var storage = GetStorage();
-        List<String> diffs =
-            List<String>.from(storage.read('difficult_words') ?? []);
-        diffs.remove(w);
-        storage.write('difficult_words', diffs);
-        Get.snackbar("彻底掌握", "《$w》已被斩草除根，主线也不再出现！",
-            duration: const Duration(seconds: 1));
-      }
       if (wId != null) {
-        await studyService.markFamiliar(wId);
+        await appService.markWordFamiliar(
+          wId,
+          bookName: appService.bookName,
+        );
         final status =
             bookWordStatusMap[wId] ?? WordStatusPO(word: _wordStatusKey(wId));
         status.status = -1;
@@ -1193,18 +1184,10 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     }
 
     if (wId != null) {
-      await studyService.markFamiliar(wId);
-
-      final spelling = word.value?.word;
-      if (spelling != null) {
-        var storage = GetStorage();
-        List<String> diffs =
-            List<String>.from(storage.read('difficult_words') ?? []);
-        if (diffs.remove(spelling)) {
-          await storage.write('difficult_words', diffs);
-        }
-      }
-
+      await appService.markWordFamiliar(
+        wId,
+        bookName: appService.bookName,
+      );
       if (Get.isRegistered<SelectBookController>()) {
         Get.find<SelectBookController>().refreshBooks();
       }
@@ -1258,6 +1241,8 @@ class StudyController extends GetxController with WidgetsBindingObserver {
       _saveQueueState();
       await fetchCount();
       controlEnable.value = true;
+      Get.snackbar("已加入熟词库", "该词不再进入学习与复习",
+          duration: const Duration(seconds: 2));
     } else {
       var nextW = await studyService.fetchNextWord();
       if (nextW != null) {
@@ -1271,6 +1256,107 @@ class StudyController extends GetxController with WidgetsBindingObserver {
       await startPlay();
       _saveQueueState();
       await fetchCount();
+      controlEnable.value = true;
+      Get.snackbar("已加入熟词库", "该词不再进入学习与复习",
+          duration: const Duration(seconds: 2));
+    }
+  }
+
+  Future<bool> deleteWordPermanently(WordVO target) async {
+    final wordId = target.wordId;
+    if (wordId == null || wordId.isEmpty) return false;
+
+    final deleted = await appService.deleteWord(
+      wordId,
+      bookName: appService.bookName,
+    );
+    if (!deleted) return false;
+
+    await studyService.removeReviewWordState(appService.bookId, wordId);
+    bookWordStatusMap.remove(wordId);
+
+    final removedBeforeBackup = _backupPlayingWords
+        .take(_backupPlayingIndex)
+        .where((item) => item.wordId == wordId)
+        .length;
+    _backupPlayingWords.removeWhere((item) => item.wordId == wordId);
+    _backupPlayingIndex -= removedBeforeBackup;
+    if (_backupPlayingWords.isEmpty) {
+      _backupPlayingIndex = 0;
+    } else {
+      _backupPlayingIndex = max(
+        0,
+        min(_backupPlayingIndex, _backupPlayingWords.length - 1),
+      );
+    }
+
+    final safeIndex = min(playingIndex, playingWords.length);
+    final oldLength = playingWords.length;
+    final removedBefore = playingWords
+        .take(safeIndex)
+        .where((item) => item.wordId == wordId)
+        .length;
+    playingWords.removeWhere((item) => item.wordId == wordId);
+    playingIndex = max(0, playingIndex - removedBefore);
+    if (playingWords.isNotEmpty) {
+      playingIndex = min(playingIndex, playingWords.length - 1);
+    }
+    final removedFromQueue = oldLength != playingWords.length;
+
+    if (Get.parameters['mode'] == 'review' && removedFromQueue) {
+      if (playingWords.isNotEmpty) {
+        await _invalidateArticleForChangedReviewBatch();
+      } else {
+        await _clearArticleForEmptiedReviewBatch();
+      }
+    }
+
+    if (playingWords.isEmpty) {
+      word.value = null;
+      await GetStorage().remove(_manualStudyCursorKey);
+    } else if (isManualMode.value) {
+      _loadManualWord();
+    } else if (word.value?.wordId == wordId) {
+      word.value = playingWords[playingIndex];
+      await startPlay();
+    }
+
+    _saveQueueState();
+    await fetchCount();
+    if (Get.isRegistered<SelectBookController>()) {
+      Get.find<SelectBookController>().refreshBooks();
+    }
+    return true;
+  }
+
+  void delete() async {
+    if (!controlEnable.value || word.value == null) return;
+    final target = word.value!;
+    final confirmed = await Get.defaultDialog<bool>(
+      title: "从词书彻底删除",
+      middleText: "《${target.word ?? ''}》会从当前词书的普通词、熟词和顽固词库中移除，是否继续？",
+      textConfirm: "彻底删除",
+      textCancel: "取消",
+      confirmTextColor: Colors.white,
+      buttonColor: Colors.red,
+      cancelTextColor: const Color(0xFF64748B),
+      onConfirm: () => Get.back(result: true),
+      onCancel: () => Get.back(result: false),
+    );
+    if (confirmed != true) return;
+
+    controlEnable.value = false;
+    await stopPlay();
+    try {
+      final deleted = await deleteWordPermanently(target);
+      Get.snackbar(
+        deleted ? "删除成功" : "删除失败",
+        deleted ? "《${target.word ?? ''}》已从本书移除" : "未找到该单词的词源记录",
+        duration: const Duration(seconds: 2),
+      );
+    } catch (error) {
+      Get.snackbar("删除失败", "$error", duration: const Duration(seconds: 3));
+    } finally {
       controlEnable.value = true;
     }
   }
@@ -1402,25 +1488,29 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     generateArticle();
   }
 
+  Future<void> _clearArticleForEmptiedReviewBatch() async {
+    cancelArticleGeneration();
+    final storage = GetStorage();
+    await storage.remove('review_batch_key_${appService.bookId}');
+    await storage.remove(_articleStorageKey);
+    _cachedArticleBatchKey = "";
+    aiArticle.value = "";
+    hasNextReviewBatch.value = false;
+    nextReviewBatchCount.value = 0;
+  }
+
   Future<void> markFamiliarFromWordList(WordVO target) async {
     final wordId = target.wordId;
     if (wordId == null || wordId.isEmpty) return;
 
-    await studyService.markFamiliar(wordId);
+    await appService.markWordFamiliar(
+      wordId,
+      bookName: appService.bookName,
+    );
     final status =
         bookWordStatusMap[wordId] ?? WordStatusPO(word: _wordStatusKey(wordId));
     status.status = -1;
     bookWordStatusMap[wordId] = status;
-
-    final spelling = target.word;
-    if (spelling != null) {
-      final storage = GetStorage();
-      final difficultWords =
-          List<String>.from(storage.read('difficult_words') ?? []);
-      if (difficultWords.remove(spelling)) {
-        await storage.write('difficult_words', difficultWords);
-      }
-    }
 
     final removedBeforeBackup = _backupPlayingWords
         .take(_backupPlayingIndex)
@@ -1455,6 +1545,8 @@ class StudyController extends GetxController with WidgetsBindingObserver {
       );
       if (playingWords.isNotEmpty) {
         await _invalidateArticleForChangedReviewBatch();
+      } else {
+        await _clearArticleForEmptiedReviewBatch();
       }
     }
 

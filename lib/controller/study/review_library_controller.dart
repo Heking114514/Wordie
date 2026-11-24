@@ -92,10 +92,14 @@ class ReviewLibraryController extends GetxController {
 
     int bId = int.tryParse(word.helper ?? "") ?? appService.bookId;
     final sourceBook = _bookNameForId(word.helper);
-    if (appService.wordService.customBookNames.contains(sourceBook)) {
-      await appService.removeWordFromCustomBook(sourceBook, word.word!);
+    final deleted = await appService.deleteWord(
+      word.wordId,
+      bookName: sourceBook,
+    );
+    if (!deleted) {
+      Get.snackbar("删除失败", "未找到该单词的词书源记录");
+      return;
     }
-    await wordDao.markWordFamiliarById(word.wordId, bId);
     await studyService.removeReviewWordState(bId, word.wordId!);
 
     allWords.removeWhere(

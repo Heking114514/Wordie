@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
 import '../../util/quotes.dart';
+import '../../util/time.dart';
 
 class HomeControllerV2 extends GetxController {
   var studyTime = 0.0.obs;
@@ -83,20 +84,25 @@ class HomeControllerV2 extends GetxController {
   }
 
   void startReview() async {
-    final todayCount = await _getReviewCountForBook(appService.bookName);
-    if (todayCount == 0) {
-      Get.snackbar("今日无需复习", "今天还没有学习新词，先去学一些吧");
+    final storage = GetStorage();
+    final bId = appService.bookId;
+    final savedBatch = storage.read('review_batch_$bId');
+    final savedDate = storage.read('review_date_$bId');
+    final savedPos =
+        int.tryParse('${storage.read('review_batch_pos_$bId') ?? 0}') ?? 0;
+    final hasCurrentDayBatch = savedDate == getDayKey() &&
+        savedBatch is List &&
+        savedBatch.isNotEmpty &&
+        savedPos >= 0 &&
+        savedPos <= savedBatch.length;
+    if (hasCurrentDayBatch) {
+      toReview();
       return;
     }
 
-    int bId = appService.bookId;
-    var savedBatch = GetStorage().read('review_batch_$bId');
-    var savedPos = GetStorage().read('review_batch_pos_$bId') ?? 0;
-    if (savedBatch != null &&
-        savedBatch is List &&
-        savedBatch.isNotEmpty &&
-        (savedPos as int) < savedBatch.length) {
-      toReview();
+    final todayCount = await _getReviewCountForBook(appService.bookName);
+    if (todayCount == 0) {
+      Get.snackbar("今日无需复习", "今天还没有学习新词，先去学一些吧");
       return;
     }
     showReviewSettingsDialog();
@@ -155,7 +161,7 @@ class HomeControllerV2 extends GetxController {
                     fontWeight: FontWeight.bold,
                     color: isDark ? Colors.white : Colors.black)),
             const SizedBox(height: 15),
-            Text("复习范围：今天新学且已完成的单词",
+            Text("复习范围：首次进入时冻结当天已完成的单词",
                 style: TextStyle(
                     fontSize: 13,
                     color: const Color(0xFF6366F1),

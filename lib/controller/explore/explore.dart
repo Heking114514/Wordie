@@ -3,11 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import '../../dao/word/word.dart';
+import '../../dicts/reader.dart';
 import '../../entity/word/vo/word.dart';
 import '../../service/app/app.dart';
 import '../../util/dictionary.dart';
-import '../home/home_v2.dart';
-import '../main/main_controller.dart';
 
 class ExploreController extends GetxController {
   final AppService appService = Get.find();
@@ -82,7 +81,7 @@ class ExploreController extends GetxController {
       bool meansEmpty =
           m == null || m.isEmpty || m.every((e) => e.trim().isEmpty);
       bool meansFailed =
-          !meansEmpty && m!.length == 1 && m[0].contains("释义获取失败");
+          !meansEmpty && m.length == 1 && m[0].contains("释义获取失败");
       if (meansEmpty || meansFailed) {
         _fillEmptyMeansInBackground(vo);
       }
@@ -99,8 +98,45 @@ class ExploreController extends GetxController {
     }
   }
 
+  /// Returns the freshest full word model without triggering another lookup.
+  ///
+  /// Search results contain only the fields needed by the list. The detail
+  /// sheet uses this snapshot so it can show every available example while
+  /// still falling back to the search VO for older/cached entries.
+  Word resolveWordDetail(WordVO word) {
+    final stored =
+        appService.getWordBySpell(word.word) ?? appService.getWord(word.wordId);
+
+    List<Sentence>? sentences = stored?.sentences;
+    if ((sentences == null || sentences.isEmpty) &&
+        word.sentence != null &&
+        word.sentence!.trim().isNotEmpty) {
+      sentences = [
+        Sentence(
+          sentence: word.sentence,
+          sentenceCn: word.sentenceMeans,
+        ),
+      ];
+    }
+
+    final storedMeans = stored?.means?.trim();
+    final means = storedMeans != null && storedMeans.isNotEmpty
+        ? stored!.means
+        : word.means?.where((e) => e.trim().isNotEmpty).join('\n');
+
+    return Word(
+      id: stored?.id ?? word.wordId,
+      word: stored?.word ?? word.word,
+      usVoice: stored?.usVoice ?? word.usaVoice,
+      ukVoice: stored?.ukVoice ?? word.ukVoice,
+      means: means,
+      helper: stored?.helper,
+      sentences: sentences,
+    );
+  }
+
   void _fetchFromApi(String spell) async {
-    print('[SEARCH] _fetchFromApi "$spell" triggered');
+    debugPrint('[SEARCH] _fetchFromApi "$spell" triggered');
     isSearchingApi.value = true;
     final word = await fetchWordDefinition(spell);
     if (word != null) {
@@ -114,7 +150,7 @@ class ExploreController extends GetxController {
         }
       }
     } else {
-      print('[SEARCH] fetchWordDefinition returned null for "$spell"');
+      debugPrint('[SEARCH] fetchWordDefinition returned null for "$spell"');
     }
     isSearchingApi.value = false;
   }
@@ -207,7 +243,8 @@ class ExploreController extends GetxController {
   }
 
   Future<void> _addWordToSpecificLibrary(String spell, String bookName) async {
-    print('[ADD] _addWordToSpecificLibrary spell="$spell" book="$bookName"');
+    debugPrint(
+        '[ADD] _addWordToSpecificLibrary spell="$spell" book="$bookName"');
     final existing = appService.getWordBySpell(spell);
     if (existing == null) {
       final fetched = await fetchWordDefinition(spell);

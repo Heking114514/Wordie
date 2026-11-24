@@ -2,10 +2,12 @@
 import 'dart:io';
 import 'package:english/dicts/reader.dart';
 import 'package:english/service/app/app.dart';
+import 'package:english/service/word/word.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:english/dao/word/word.dart';
 import '../../util/dictionary.dart';
 import '../../controller/home/home_v2.dart';
@@ -55,6 +57,7 @@ class SelectBookController extends GetxController {
 
     var wordDao = Get.find<WordDao>();
     int progressCount = await wordDao.queryProgressWordCount(bId) ?? 0;
+    final pool = await appService.loadWordPool(bookName);
 
     Get.bottomSheet(
       Container(
@@ -63,95 +66,316 @@ class SelectBookController extends GetxController {
           color: isDark ? const Color(0xFF1E293B) : Colors.white,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text("《$bookName》配置",
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : Colors.black)),
-            const SizedBox(height: 15),
-            if (progressCount > 0)
-              Container(
-                padding: const EdgeInsets.all(12),
-                margin: const EdgeInsets.only(bottom: 10),
-                decoration: BoxDecoration(
-                    color: Colors.orangeAccent.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8)),
-                child: Text("提示：本书已产生 $progressCount 个学习记录进度",
-                    style: const TextStyle(
-                        color: Colors.orangeAccent, fontSize: 13)),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text("《$bookName》配置",
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: isDark ? Colors.white : Colors.black)),
+              const SizedBox(height: 15),
+              if (progressCount > 0)
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  margin: const EdgeInsets.only(bottom: 10),
+                  decoration: BoxDecoration(
+                      color: Colors.orangeAccent.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8)),
+                  child: Text("提示：本书已产生 $progressCount 个学习记录进度",
+                      style: const TextStyle(
+                          color: Colors.orangeAccent, fontSize: 13)),
+                ),
+              ListTile(
+                leading: Icon(Icons.sort_by_alpha,
+                    color: isDark ? Colors.white : Colors.black),
+                title: Text("正序背诵 (A-Z)",
+                    style:
+                        TextStyle(color: isDark ? Colors.white : Colors.black)),
+                onTap: () => _confirmSetOrder(bId, 'ASC', progressCount),
               ),
-            ListTile(
-              leading: Icon(Icons.sort_by_alpha,
-                  color: isDark ? Colors.white : Colors.black),
-              title: Text("正序背诵 (A-Z)",
-                  style:
-                      TextStyle(color: isDark ? Colors.white : Colors.black)),
-              onTap: () => _confirmSetOrder(bId, 'ASC', progressCount),
+              ListTile(
+                leading: Icon(Icons.sort_by_alpha,
+                    color: isDark ? Colors.white : Colors.black),
+                title: Text("倒序背诵 (Z-A)",
+                    style:
+                        TextStyle(color: isDark ? Colors.white : Colors.black)),
+                onTap: () => _confirmSetOrder(bId, 'DESC', progressCount),
+              ),
+              ListTile(
+                leading: Icon(Icons.shuffle,
+                    color: isDark ? Colors.white : Colors.black),
+                title: Text("乱序背诵 (随机)",
+                    style:
+                        TextStyle(color: isDark ? Colors.white : Colors.black)),
+                onTap: () => _confirmSetOrder(bId, 'RANDOM', progressCount),
+              ),
+              Divider(color: isDark ? Colors.white24 : Colors.black26),
+              _buildPoolTile(
+                bookName: bookName,
+                bookId: bId,
+                isDark: isDark,
+                type: WordPoolType.ordinary,
+                snapshot: pool,
+              ),
+              _buildPoolTile(
+                bookName: bookName,
+                bookId: bId,
+                isDark: isDark,
+                type: WordPoolType.familiar,
+                snapshot: pool,
+              ),
+              _buildPoolTile(
+                bookName: bookName,
+                bookId: bId,
+                isDark: isDark,
+                type: WordPoolType.difficult,
+                snapshot: pool,
+              ),
+              ListTile(
+                leading: const Icon(Icons.search, color: Colors.blue),
+                title: Text("搜索本书单词",
+                    style:
+                        TextStyle(color: isDark ? Colors.white : Colors.black)),
+                onTap: () {
+                  Get.back();
+                  _showBookSearch(context, bookName, isDark);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.settings_suggest, color: Colors.blue),
+                title: Text("重选播放模式",
+                    style:
+                        TextStyle(color: isDark ? Colors.white : Colors.black)),
+                onTap: () {
+                  Get.back();
+                  appService.showModeSelectionDialog(bookName, bId, context,
+                      isReselect: true);
+                },
+              ),
+              Divider(color: isDark ? Colors.white24 : Colors.black26),
+              ListTile(
+                leading: const Icon(Icons.refresh, color: Colors.orange),
+                title: const Text("清空本词书进度",
+                    style: TextStyle(color: Colors.orange)),
+                onTap: () => _confirmClearProgress(bId, progressCount),
+              ),
+              Divider(color: isDark ? Colors.white24 : Colors.black26),
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title:
+                    const Text("彻底删除该词库", style: TextStyle(color: Colors.red)),
+                onTap: () => _confirmDeleteBook(bookName, bId, progressCount),
+              ),
+            ],
+          ),
+        ),
+      ),
+      isScrollControlled: true,
+    );
+  }
+
+  Widget _buildPoolTile({
+    required String bookName,
+    required int bookId,
+    required bool isDark,
+    required WordPoolType type,
+    required WordPoolSnapshot snapshot,
+  }) {
+    late final IconData icon;
+    late final String subtitle;
+    switch (type) {
+      case WordPoolType.ordinary:
+        icon = Icons.format_list_bulleted;
+        subtitle = '导出时包含顽固词';
+        break;
+      case WordPoolType.familiar:
+        icon = Icons.check_circle_outline;
+        subtitle = '已退出学习与复习';
+        break;
+      case WordPoolType.difficult:
+        icon = Icons.local_fire_department_outlined;
+        subtitle = '当前词书独立记录';
+        break;
+    }
+    return ListTile(
+      leading: Icon(icon, color: Colors.teal),
+      title: Text(
+        type.label,
+        style: TextStyle(color: isDark ? Colors.white : Colors.black),
+      ),
+      subtitle: Text(
+        '$subtitle · ${snapshot.countFor(type)} 个',
+        style: const TextStyle(color: Colors.grey, fontSize: 12),
+      ),
+      trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+      onTap: () {
+        Get.back();
+        _showWordPool(
+          bookName,
+          bookId,
+          isDark,
+          type,
+          snapshot,
+        );
+      },
+    );
+  }
+
+  void _showWordPool(
+    String bookName,
+    int bookId,
+    bool isDark,
+    WordPoolType type,
+    WordPoolSnapshot snapshot,
+  ) {
+    final words = snapshot.wordsFor(type);
+    Get.bottomSheet(
+      Container(
+        height: Get.height * 0.78,
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF1E293B) : Colors.white,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 10, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '${type.label} · ${words.length}',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          bookName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '导出 ${type.exportLabel} TXT',
+                    onPressed: words.isEmpty
+                        ? null
+                        : () => _exportWordPool(
+                              bookName,
+                              type,
+                              snapshot,
+                            ),
+                    icon: const Icon(Icons.download_outlined),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Get.back(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
             ),
-            ListTile(
-              leading: Icon(Icons.sort_by_alpha,
-                  color: isDark ? Colors.white : Colors.black),
-              title: Text("倒序背诵 (Z-A)",
-                  style:
-                      TextStyle(color: isDark ? Colors.white : Colors.black)),
-              onTap: () => _confirmSetOrder(bId, 'DESC', progressCount),
+            Divider(
+              height: 1,
+              color: isDark ? const Color(0xFF334155) : const Color(0xFFE2E8F0),
             ),
-            ListTile(
-              leading: Icon(Icons.shuffle,
-                  color: isDark ? Colors.white : Colors.black),
-              title: Text("乱序背诵 (随机)",
-                  style:
-                      TextStyle(color: isDark ? Colors.white : Colors.black)),
-              onTap: () => _confirmSetOrder(bId, 'RANDOM', progressCount),
-            ),
-            Divider(color: isDark ? Colors.white24 : Colors.black26),
-            ListTile(
-              leading: const Icon(Icons.file_copy, color: Colors.teal),
-              title: Text("导出顽固词汇为新词书",
-                  style:
-                      TextStyle(color: isDark ? Colors.white : Colors.black)),
-              onTap: () {
-                Get.back();
-                _exportDifficultBook(context, isDark);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.search, color: Colors.blue),
-              title: Text("搜索本书单词",
-                  style:
-                      TextStyle(color: isDark ? Colors.white : Colors.black)),
-              onTap: () {
-                Get.back();
-                _showBookSearch(context, bookName, isDark);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.settings_suggest, color: Colors.blue),
-              title: Text("重选播放模式",
-                  style:
-                      TextStyle(color: isDark ? Colors.white : Colors.black)),
-              onTap: () {
-                Get.back();
-                appService.showModeSelectionDialog(bookName, bId, context,
-                    isReselect: true);
-              },
-            ),
-            Divider(color: isDark ? Colors.white24 : Colors.black26),
-            ListTile(
-              leading: const Icon(Icons.refresh, color: Colors.orange),
-              title:
-                  const Text("清空本词书进度", style: TextStyle(color: Colors.orange)),
-              onTap: () => _confirmClearProgress(bId, progressCount),
-            ),
-            Divider(color: isDark ? Colors.white24 : Colors.black26),
-            ListTile(
-              leading: const Icon(Icons.delete, color: Colors.red),
-              title: const Text("彻底删除该词库", style: TextStyle(color: Colors.red)),
-              onTap: () => _confirmDeleteBook(bookName, bId, progressCount),
+            Expanded(
+              child: words.isEmpty
+                  ? const Center(
+                      child: Text(
+                        '当前分类暂无单词',
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.only(bottom: 30),
+                      itemCount: words.length,
+                      separatorBuilder: (_, __) => Divider(
+                        height: 1,
+                        indent: 20,
+                        endIndent: 20,
+                        color: isDark
+                            ? const Color(0xFF334155)
+                            : const Color(0xFFF1F5F9),
+                      ),
+                      itemBuilder: (_, index) {
+                        final word = words[index];
+                        final meaning =
+                            (word.means ?? '').replaceAll('\n', '；');
+                        return ListTile(
+                          title: Text(
+                            word.word ?? '',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: isDark ? Colors.white : Colors.black87,
+                            ),
+                          ),
+                          subtitle: Text(
+                            meaning.isEmpty ? '暂无释义' : meaning,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          trailing: PopupMenuButton<String>(
+                            tooltip: '单词操作',
+                            onSelected: (action) => _handlePoolAction(
+                              action: action,
+                              word: word,
+                              bookName: bookName,
+                              bookId: bookId,
+                              isDifficult: snapshot.isDifficult(word),
+                            ),
+                            itemBuilder: (_) => [
+                              if (type == WordPoolType.familiar)
+                                const PopupMenuItem(
+                                  value: 'restore',
+                                  child: Text('恢复学习'),
+                                )
+                              else
+                                const PopupMenuItem(
+                                  value: 'familiar',
+                                  child: Text('设为熟词'),
+                                ),
+                              if (type == WordPoolType.ordinary &&
+                                  !snapshot.isDifficult(word))
+                                const PopupMenuItem(
+                                  value: 'difficult',
+                                  child: Text('设为顽固词'),
+                                ),
+                              if (snapshot.isDifficult(word))
+                                const PopupMenuItem(
+                                  value: 'remove-difficult',
+                                  child: Text('移出顽固词库'),
+                                ),
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Text(
+                                  '从本书彻底删除',
+                                  style: TextStyle(color: Colors.red),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
             ),
           ],
         ),
@@ -160,82 +384,132 @@ class SelectBookController extends GetxController {
     );
   }
 
-  void _exportDifficultBook(BuildContext context, bool isDark) async {
-    List<String> difficultWords = appService.wordService.getDifficultWords();
+  Future<void> _handlePoolAction({
+    required String action,
+    required Word word,
+    required String bookName,
+    required int bookId,
+    required bool isDifficult,
+  }) async {
+    if (action == 'delete') {
+      _confirmPermanentWordDelete(word, bookName);
+      return;
+    }
+    try {
+      if (action == 'familiar') {
+        final changed = await appService.markWordFamiliar(
+          word.id,
+          bookName: bookName,
+        );
+        if (!changed) return;
+      } else if (action == 'restore') {
+        await appService.restoreWord(word.id, bookName: bookName);
+      } else if (action == 'difficult') {
+        final added = await appService.wordService.addWordToDifficultBook(
+          word.word ?? '',
+          bookId: bookId.toString(),
+        );
+        if (!added) return;
+      } else if (action == 'remove-difficult' && isDifficult) {
+        final removed =
+            await appService.wordService.removeWordFromDifficultBook(
+          word.word ?? '',
+          bookId: bookId.toString(),
+        );
+        if (!removed) return;
+      } else {
+        return;
+      }
 
-    if (difficultWords.isEmpty) {
-      Get.snackbar("提示", "顽固词汇为空，去学习界面添加吧");
+      if (Get.isBottomSheetOpen == true) Get.back();
+      await refreshBooks();
+      Get.snackbar('操作成功', '《${word.word ?? ''}》已更新');
+    } catch (error) {
+      Get.snackbar('操作失败', '$error');
+    }
+  }
+
+  void _confirmPermanentWordDelete(Word word, String bookName) {
+    Get.defaultDialog(
+      title: '彻底删除单词',
+      middleText: '《${word.word ?? ''}》将从《$bookName》的词源中移除，是否继续？',
+      textConfirm: '彻底删除',
+      textCancel: '取消',
+      confirmTextColor: Colors.white,
+      buttonColor: Colors.red,
+      cancelTextColor: Colors.grey,
+      onConfirm: () async {
+        Get.back();
+        try {
+          final deleted = await appService.deleteWord(
+            word.id,
+            bookName: bookName,
+          );
+          if (!deleted) {
+            Get.snackbar('删除失败', '未找到该单词的词源记录');
+            return;
+          }
+          if (Get.isBottomSheetOpen == true) Get.back();
+          await refreshBooks();
+          Get.snackbar('删除成功', '《${word.word ?? ''}》已从本书移除');
+        } catch (error) {
+          Get.snackbar('删除失败', '$error');
+        }
+      },
+    );
+  }
+
+  Future<void> _exportWordPool(
+    String bookName,
+    WordPoolType type,
+    WordPoolSnapshot snapshot,
+  ) async {
+    final words = snapshot.wordsFor(type);
+    if (words.isEmpty) {
+      Get.snackbar('提示', '${type.exportLabel}为空');
       return;
     }
 
-    TextEditingController nameController =
-        TextEditingController(text: "顽固词汇导出");
-    Get.bottomSheet(
-      Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: isDark ? const Color(0xFF1E293B) : Colors.white,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text("导出顽固词汇",
-                style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : Colors.black)),
-            const SizedBox(height: 12),
-            Text("共 ${difficultWords.length} 个词",
-                style: TextStyle(color: Colors.grey, fontSize: 13)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: nameController,
-              style: TextStyle(color: isDark ? Colors.white : Colors.black),
-              decoration: InputDecoration(
-                labelText: "新词书名称",
-                labelStyle: const TextStyle(color: Colors.grey),
-                fillColor:
-                    isDark ? const Color(0xFF0F172A) : const Color(0xFFF1F5F9),
-                filled: true,
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none),
-              ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF407BFF),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-                onPressed: () async {
-                  Get.back();
-                  String newName = nameController.text.trim();
-                  if (newName.isEmpty) newName = "顽固词汇导出";
-                  if (appService.wordService.customBookNames
-                      .contains(newName)) {
-                    Get.snackbar("提示", "《$newName》已存在");
-                    return;
-                  }
-                  await appService.replaceCustomBookWords(
-                      newName, difficultWords);
-                  refreshBooks();
-                  Get.snackbar("导出成功", "顽固词汇已导出为《$newName》");
-                },
-                child: const Text("确认导出",
-                    style: TextStyle(color: Colors.white, fontSize: 16)),
-              ),
-            ),
-            const SizedBox(height: 10),
-          ],
-        ),
-      ),
+    final content = DifficultWordStore.buildTxt(words);
+    final rawFileName = '${bookName}_${type.exportLabel}';
+    final safeFileName =
+        rawFileName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+    final fileName =
+        safeFileName.isEmpty ? '词库_${type.exportLabel}' : safeFileName;
+
+    Get.dialog(
+      const Center(child: CircularProgressIndicator()),
+      barrierDismissible: false,
     );
+    try {
+      String? outputPath;
+      if (Platform.isAndroid) {
+        final directory = await getExternalStorageDirectory();
+        if (directory == null) throw '未获取到外部存储目录';
+        outputPath = '${directory.path}/$fileName.txt';
+      } else {
+        outputPath = await FilePicker.platform.saveFile(
+          dialogTitle: '导出 ${type.exportLabel}',
+          fileName: '$fileName.txt',
+          type: FileType.custom,
+          allowedExtensions: ['txt'],
+        );
+      }
+      if (outputPath == null) {
+        if (Get.isDialogOpen == true) Get.back();
+        return;
+      }
+      await File(outputPath).writeAsString(content, flush: true);
+      if (Get.isDialogOpen == true) Get.back();
+      Get.snackbar(
+        '导出成功',
+        '${type.exportLabel} ${words.length} 个，已保存至：\n$outputPath',
+        duration: const Duration(seconds: 6),
+      );
+    } catch (error) {
+      if (Get.isDialogOpen == true) Get.back();
+      Get.snackbar('导出失败', '$error');
+    }
   }
 
   void _showBookSearch(BuildContext context, String bookName, bool isDark) {

@@ -3,7 +3,6 @@ import 'package:english/controller/selectBook/selectBook.dart';
 import 'package:english/widget/book_icon.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../../controller/home/home_v2.dart';
 
 class SelectBookPage extends GetView<SelectBookController> {
   const SelectBookPage({Key? key}) : super(key: key);

@@ -1,9 +1,185 @@
 // lib/service/word/word.dart
+import 'package:english/dao/word/word.dart';
 import 'package:english/dicts/reader.dart';
+import 'package:english/entity/word/po/word.dart';
 import 'package:english/util/dictionary.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:get_storage/get_storage.dart';
+
+enum WordPoolType { ordinary, familiar, difficult }
+
+extension WordPoolTypeText on WordPoolType {
+  String get label {
+    switch (this) {
+      case WordPoolType.ordinary:
+        return '普通词';
+      case WordPoolType.familiar:
+        return '熟词';
+      case WordPoolType.difficult:
+        return '顽固词';
+    }
+  }
+
+  String get exportLabel {
+    switch (this) {
+      case WordPoolType.ordinary:
+        return '普通词汇';
+      case WordPoolType.familiar:
+        return '熟词';
+      case WordPoolType.difficult:
+        return '顽固词汇';
+    }
+  }
+}
+
+/// A read-only snapshot of the three overlapping pools for one book.
+///
+/// Familiar words are source words with status -1. Difficult words are an
+/// overlay, so ordinary words intentionally include every difficult word even
+/// when that word is also familiar.
+class WordPoolSnapshot {
+  final List<Word> ordinaryWords;
+  final List<Word> familiarWords;
+  final List<Word> difficultWords;
+
+  const WordPoolSnapshot({
+    required this.ordinaryWords,
+    required this.familiarWords,
+    required this.difficultWords,
+  });
+
+  factory WordPoolSnapshot.fromWords({
+    required Iterable<Word> sourceWords,
+    Iterable<String> familiarKeys = const <String>[],
+    Iterable<String> difficultSpellings = const <String>[],
+    Iterable<String> deletedKeys = const <String>[],
+  }) {
+    final familiar = familiarKeys.map(_normalizeKey).where(_isPresent).toSet();
+    final difficult =
+        difficultSpellings.map(_normalizeKey).where(_isPresent).toSet();
+    final deleted = deletedKeys.map(_normalizeKey).where(_isPresent).toSet();
+    final ordinary = <Word>[];
+    final familiarWords = <Word>[];
+    final difficultWords = <Word>[];
+    final seen = <String>{};
+
+    for (final word in sourceWords) {
+      final identity = _wordIdentity(word);
+      if (!_isPresent(identity) || !seen.add(identity)) continue;
+
+      final keys = _wordKeys(word);
+      if (keys.any(deleted.contains)) continue;
+      final isFamiliar = keys.any(familiar.contains);
+      final isDifficult = keys.any(difficult.contains);
+
+      if (!isFamiliar || isDifficult) ordinary.add(word);
+      if (isFamiliar) familiarWords.add(word);
+      if (isDifficult) difficultWords.add(word);
+    }
+
+    return WordPoolSnapshot(
+      ordinaryWords: List<Word>.unmodifiable(ordinary),
+      familiarWords: List<Word>.unmodifiable(familiarWords),
+      difficultWords: List<Word>.unmodifiable(difficultWords),
+    );
+  }
+
+  List<Word> wordsFor(WordPoolType type) {
+    switch (type) {
+      case WordPoolType.ordinary:
+        return ordinaryWords;
+      case WordPoolType.familiar:
+        return familiarWords;
+      case WordPoolType.difficult:
+        return difficultWords;
+    }
+  }
+
+  int countFor(WordPoolType type) => wordsFor(type).length;
+
+  bool isDifficult(Word word) {
+    final keys = _wordKeys(word);
+    return difficultWords.any((item) => item.word == word.word) ||
+        keys.any((key) =>
+            difficultWords.any((item) => _wordKeys(item).contains(key)));
+  }
+
+  static Set<String> _wordKeys(Word word) {
+    return <String>{
+      if (_isPresent(word.id ?? '')) _normalizeKey(word.id!),
+      if (_isPresent(word.word ?? '')) _normalizeKey(word.word!),
+    };
+  }
+
+  static String _wordIdentity(Word word) {
+    if (_isPresent(word.word ?? '')) return _normalizeKey(word.word!);
+    return _normalizeKey(word.id ?? '');
+  }
+
+  static bool _isPresent(String value) => value.isNotEmpty;
+
+  static String _normalizeKey(String value) => value.trim().toLowerCase();
+}
+
+/// Pure migration helpers for the legacy global `difficult_words` list.
+class DifficultWordStore {
+  static const String byBookKey = 'difficult_words_by_book_v1';
+  static const String legacyKey = 'difficult_words';
+  static const String migrationKey = 'difficult_words_by_book_migrated';
+  static const String mirrorBookKey = 'difficult_words_mirror_book';
+
+  static List<String> normalizeWords(dynamic raw) {
+    if (raw is! List) return <String>[];
+    final words = raw
+        .map((value) => value.toString().trim().toLowerCase())
+        .where((value) => value.isNotEmpty)
+        .toSet()
+        .toList();
+    words.sort();
+    return words;
+  }
+
+  static Map<String, List<String>> normalizeBookMap(dynamic raw) {
+    if (raw is! Map) return <String, List<String>>{};
+    final result = <String, List<String>>{};
+    raw.forEach((key, value) {
+      final bookId = key.toString().trim();
+      if (bookId.isEmpty) return;
+      result[bookId] = normalizeWords(value);
+    });
+    return result;
+  }
+
+  static Map<String, List<String>> migrateLegacy({
+    required Map<String, List<String>> byBook,
+    required List<String> legacyWords,
+    required String activeBookId,
+    required bool alreadyMigrated,
+  }) {
+    final result = <String, List<String>>{
+      for (final entry in byBook.entries)
+        entry.key: normalizeWords(entry.value),
+    };
+    if (!alreadyMigrated &&
+        legacyWords.isNotEmpty &&
+        (result[activeBookId]?.isEmpty ?? true)) {
+      result[activeBookId] = normalizeWords(legacyWords);
+    }
+    return result;
+  }
+
+  static String buildTxt(Iterable<Word> words) {
+    final buffer = StringBuffer();
+    for (final word in words) {
+      final spelling = word.word?.trim() ?? '';
+      if (spelling.isEmpty) continue;
+      final meaning = (word.means ?? '').trim().replaceAll(RegExp(r'\s+'), ' ');
+      buffer.writeln('$spelling\t${meaning.isEmpty ? '暂无释义' : meaning}');
+    }
+    return buffer.toString();
+  }
+}
 
 class WordService {
   var bookNames = [
@@ -191,6 +367,7 @@ class WordService {
     try {
       var words = await readWordMap();
       var books = await readBookMap(words);
+      await _filterDeletedSystemWords(books);
       wordMap.addAll(words);
 
       // 同步构建拼写索引
@@ -231,6 +408,7 @@ class WordService {
       }
 
       await loadCustomBooks();
+      activateDifficultBook(_activeBookId());
       loaded = true;
     } catch (e) {
       print('[WordService] FATAL ERROR during loadWords: $e');
@@ -275,26 +453,253 @@ class WordService {
         String id = storage.read('book_id_$name') ?? "${name.hashCode.abs()}";
         bookMap[name] = Book(id: id, name: name, words: words);
       });
+      await _ensureCustomBookRowsInDb();
     } catch (e) {
       print('[WordService] loadCustomBooks error: $e');
     }
   }
 
-  Future<bool> addWordToDifficultBook(String spell) async {
-    var storage = GetStorage();
-    List<String> words =
-        List<String>.from(storage.read('difficult_words') ?? []);
-    if (words.contains(spell)) {
-      return false;
+  Future<void> _ensureCustomBookRowsInDb() async {
+    if (!Get.isRegistered<WordDao>()) return;
+    final dao = Get.find<WordDao>();
+    for (final name in customBookNames) {
+      final book = bookMap[name];
+      final bookId = int.tryParse(book?.id ?? '');
+      if (book == null || book.words == null || bookId == null) continue;
+      final desired = book.words!
+          .map((word) => word.id)
+          .whereType<String>()
+          .where((wordId) => wordId.isNotEmpty)
+          .toSet();
+      if (desired.isEmpty) continue;
+      final existingRows = await dao.queryWords(bookId);
+      final existing =
+          existingRows.map((word) => word.word).whereType<String>().toSet();
+      for (final wordId in desired.difference(existing)) {
+        await dao.addWord(WordPO(word: wordId, book: book.id));
+      }
     }
-    words.add(spell);
-    words.sort();
-    await storage.write('difficult_words', words);
+  }
+
+  String? _activeBookId() {
+    final selectedName = GetStorage().read('study.bookName');
+    if (selectedName is! String) return null;
+    final id = bookMap[selectedName]?.id;
+    return id == null || id.isEmpty ? null : id;
+  }
+
+  String? _resolveBookId(String? requestedBookId) {
+    if (requestedBookId != null && requestedBookId.trim().isNotEmpty) {
+      return requestedBookId.trim();
+    }
+    return _activeBookId();
+  }
+
+  Map<String, List<String>> _readDifficultWordMap(
+    GetStorage storage, {
+    String? activeBookId,
+  }) {
+    var byBook = DifficultWordStore.normalizeBookMap(
+        storage.read(DifficultWordStore.byBookKey));
+    final migrated = storage.read(DifficultWordStore.migrationKey) == true;
+    final migrationTarget = activeBookId;
+    if (!migrated && migrationTarget != null) {
+      byBook = DifficultWordStore.migrateLegacy(
+        byBook: byBook,
+        legacyWords: DifficultWordStore.normalizeWords(
+          storage.read(DifficultWordStore.legacyKey),
+        ),
+        activeBookId: migrationTarget,
+        alreadyMigrated: false,
+      );
+      storage.write(DifficultWordStore.byBookKey, byBook);
+      storage.write(DifficultWordStore.migrationKey, true);
+    }
+    return byBook;
+  }
+
+  /// Keeps the legacy global key as a mirror of the active book.
+  ///
+  /// StudyController still has a few direct reads/writes to `difficult_words`.
+  /// The per-book map is authoritative, while this mirror preserves those
+  /// existing call sites and migrates the old global data exactly once.
+  void activateDifficultBook(String? bookId) {
+    if (bookId == null || bookId.isEmpty) return;
+    final storage = GetStorage();
+    var byBook = _readDifficultWordMap(storage, activeBookId: bookId);
+    final mirrorBook =
+        storage.read(DifficultWordStore.mirrorBookKey)?.toString();
+    if (mirrorBook != null && mirrorBook.isNotEmpty && mirrorBook != bookId) {
+      byBook[mirrorBook] = DifficultWordStore.normalizeWords(
+        storage.read(DifficultWordStore.legacyKey),
+      );
+      storage.write(DifficultWordStore.byBookKey, byBook);
+    }
+    final words = byBook[bookId] ?? <String>[];
+    storage.write(DifficultWordStore.mirrorBookKey, bookId);
+    storage.write(DifficultWordStore.legacyKey, words);
+  }
+
+  Future<bool> addWordToDifficultBook(String spell, {String? bookId}) async {
+    final normalized = spell.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+    final storage = GetStorage();
+    final activeBookId = _activeBookId();
+    final resolvedBookId = _resolveBookId(bookId);
+
+    // Preserve the old global behavior if no book has been selected yet.
+    if (resolvedBookId == null) {
+      final words = DifficultWordStore.normalizeWords(
+        storage.read(DifficultWordStore.legacyKey),
+      );
+      if (words.contains(normalized)) return false;
+      words
+        ..add(normalized)
+        ..sort();
+      await storage.write(DifficultWordStore.legacyKey, words);
+      return true;
+    }
+
+    final words = getDifficultWords(bookId: resolvedBookId);
+    if (words.contains(normalized)) return false;
+    final byBook = _readDifficultWordMap(storage, activeBookId: activeBookId);
+    words
+      ..add(normalized)
+      ..sort();
+    byBook[resolvedBookId] = words;
+    await storage.write(DifficultWordStore.byBookKey, byBook);
+    if (activeBookId == resolvedBookId) {
+      await storage.write(DifficultWordStore.mirrorBookKey, resolvedBookId);
+      await storage.write(DifficultWordStore.legacyKey, words);
+    }
     return true;
   }
 
-  List<String> getDifficultWords() {
-    var storage = GetStorage();
-    return List<String>.from(storage.read('difficult_words') ?? []);
+  Future<bool> removeWordFromDifficultBook(
+    String spell, {
+    String? bookId,
+  }) async {
+    final normalized = spell.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+    final storage = GetStorage();
+    final activeBookId = _activeBookId();
+    final resolvedBookId = _resolveBookId(bookId);
+    if (resolvedBookId == null) {
+      final words = DifficultWordStore.normalizeWords(
+        storage.read(DifficultWordStore.legacyKey),
+      );
+      if (!words.remove(normalized)) return false;
+      await storage.write(DifficultWordStore.legacyKey, words);
+      return true;
+    }
+
+    final words = getDifficultWords(bookId: resolvedBookId);
+    if (!words.remove(normalized)) return false;
+    final byBook = _readDifficultWordMap(storage, activeBookId: activeBookId);
+    byBook[resolvedBookId] = words;
+    await storage.write(DifficultWordStore.byBookKey, byBook);
+    if (activeBookId == resolvedBookId) {
+      await storage.write(DifficultWordStore.legacyKey, words);
+    }
+    return true;
+  }
+
+  Future<void> clearDifficultWordsForBook(String bookId) async {
+    final storage = GetStorage();
+    final activeBookId = _activeBookId();
+    final byBook = _readDifficultWordMap(storage, activeBookId: activeBookId);
+    byBook.remove(bookId);
+    await storage.write(DifficultWordStore.byBookKey, byBook);
+    if (activeBookId == bookId) {
+      await storage.write(DifficultWordStore.legacyKey, <String>[]);
+    }
+  }
+
+  List<String> getDifficultWords({String? bookId}) {
+    final storage = GetStorage();
+    final activeBookId = _activeBookId();
+    final resolvedBookId = _resolveBookId(bookId);
+    if (resolvedBookId == null) {
+      return DifficultWordStore.normalizeWords(
+        storage.read(DifficultWordStore.legacyKey),
+      );
+    }
+
+    var byBook = _readDifficultWordMap(storage, activeBookId: activeBookId);
+    if (activeBookId == resolvedBookId) {
+      final mirrorBook =
+          storage.read(DifficultWordStore.mirrorBookKey)?.toString();
+      if (mirrorBook == resolvedBookId) {
+        final legacyRaw = storage.read(DifficultWordStore.legacyKey);
+        if (legacyRaw is List) {
+          byBook[resolvedBookId] = DifficultWordStore.normalizeWords(legacyRaw);
+          storage.write(DifficultWordStore.byBookKey, byBook);
+        }
+      } else {
+        storage.write(DifficultWordStore.mirrorBookKey, resolvedBookId);
+        storage.write(
+          DifficultWordStore.legacyKey,
+          byBook[resolvedBookId] ?? <String>[],
+        );
+      }
+    }
+    return List<String>.from(byBook[resolvedBookId] ?? const <String>[]);
+  }
+
+  bool isDifficultWord(String spell, {String? bookId}) {
+    return getDifficultWords(bookId: bookId)
+        .contains(spell.trim().toLowerCase());
+  }
+
+  String _deletedSystemWordsKey(String bookId) =>
+      'deleted_system_words_$bookId';
+
+  Set<String> deletedSystemWordSpellings(String bookId) {
+    return DifficultWordStore.normalizeWords(
+      GetStorage().read(_deletedSystemWordsKey(bookId)),
+    ).toSet();
+  }
+
+  Future<void> hideSystemWord(String bookId, String spell) async {
+    final normalized = spell.trim().toLowerCase();
+    if (normalized.isEmpty) return;
+    final storage = GetStorage();
+    final words = deletedSystemWordSpellings(bookId)..add(normalized);
+    final sorted = words.toList()..sort();
+    await storage.write(_deletedSystemWordsKey(bookId), sorted);
+  }
+
+  Future<void> _filterDeletedSystemWords(List<Book> books) async {
+    final hasWordDao = Get.isRegistered<WordDao>();
+    final wordDao = hasWordDao ? Get.find<WordDao>() : null;
+    for (final book in books) {
+      final bookId = book.id;
+      if (bookId == null || bookId.isEmpty) continue;
+      final deleted = deletedSystemWordSpellings(bookId);
+      if (deleted.isEmpty) continue;
+
+      final deletedIds = <String>{};
+      for (final word in book.words ?? const <Word>[]) {
+        final spelling = word.word?.trim().toLowerCase();
+        final id = word.id;
+        if (spelling != null && deleted.contains(spelling) && id != null) {
+          deletedIds.add(id);
+        }
+      }
+      book.words?.removeWhere(
+        (word) => deleted.contains(word.word?.trim().toLowerCase()),
+      );
+
+      final numericBookId = int.tryParse(bookId);
+      if (wordDao == null || numericBookId == null) continue;
+      for (final wordId in deletedIds) {
+        try {
+          await wordDao.deleteBookWord(numericBookId, wordId);
+          await wordDao.deleteWordStatus(numericBookId, wordId);
+        } catch (_) {
+          // The in-memory overlay still hides the word; retry on next load.
+        }
+      }
+    }
   }
 }

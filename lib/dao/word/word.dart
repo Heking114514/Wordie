@@ -64,8 +64,15 @@ abstract class WordDao {
     );
   }
 
+  Future<void> deleteWordStatus(int bookId, String word) async {
+    await queryAdapter.queryNoReturn(
+      'DELETE FROM word_status WHERE word=CAST(?1 AS TEXT) || ?2',
+      arguments: [bookId, '_$word'],
+    );
+  }
+
   Future<void> clearBookProgress(int bookId) async {
-    // 鍙竻闄ゅ涔犱腑鍜屽凡瀹屾垚鐨勮繘搴︼紝淇濈暀鐔熻瘝(status=-1)涓嶈鍒犻櫎
+    // Clear learning progress but keep familiar words (status = -1).
     await queryAdapter.queryNoReturn(
         "DELETE FROM word_status WHERE word LIKE CAST(?1 AS TEXT) || '\\_%' ESCAPE '\\' AND status != -1",
         arguments: [bookId]);
@@ -201,7 +208,7 @@ abstract class WordDao {
     var count = await queryAdapter.query(
         '''select count(distinct w.word) as count from word w
            left join word_status s on s.word = w.book || '_' || w.word
-           where w.book=CAST(?1 AS TEXT) and (s.status is null or s.status != -1)''',
+           where w.book=CAST(?1 AS TEXT) and (s.status is null or s.status >= 0)''',
         mapper: (Map<String, Object?> row) => row['count'] as int?,
         arguments: [wordBook]);
     return count;
@@ -211,7 +218,7 @@ abstract class WordDao {
     var count = await queryAdapter.query(
         '''select count(distinct word.word) as count from word_status status
         left join word word on status.word = word.book || '_' || word.word
-         where word.book=CAST(?1 AS TEXT) and status.status != -1 and (status.status=1 or (status.studyCycle>0))
+         where word.book=CAST(?1 AS TEXT) and status.status >= 0 and (status.status=1 or (status.studyCycle>0))
         ''',
         mapper: (Map<String, Object?> row) => row['count'] as int?,
         arguments: [wordBook]);
@@ -222,7 +229,7 @@ abstract class WordDao {
     var count = await queryAdapter.query(
         '''select count(distinct word.word) as count from  word_status status
         left join  word word  on status.word = word.book || '_' || word.word
-         where word.book=CAST(?1 AS TEXT) and status.status!=-1
+         where word.book=CAST(?1 AS TEXT) and status.status>=0
          and (status.status=1 or status.studyCycle>0)
          and createTime > ${getDayStartTime()}
         ''',
@@ -235,7 +242,7 @@ abstract class WordDao {
     var wordList = await queryAdapter.queryList(
         '''select distinct word.word as word from  word_status status
         left join  word word  on status.word = word.book || '_' || word.word
-         where word.book=CAST(?1 AS TEXT) and status.status!=-1
+         where word.book=CAST(?1 AS TEXT) and status.status>=0
          and (status.status=1 or status.studyCycle>0)
         ''',
         mapper: (Map<String, Object?> row) => row['word'] as String,
@@ -258,7 +265,7 @@ abstract class WordDao {
     var wordList = await queryAdapter.queryList(
         '''select distinct word.word as word from  word word
         left join  word_status status  on status.word = word.book || '_' || word.word
-         where word.book=CAST(?1 AS TEXT) and (status.status!=-1 or status.status is null)
+         where word.book=CAST(?1 AS TEXT) and (status.status>=0 or status.status is null)
         ''',
         mapper: (Map<String, Object?> row) => row['word'] as String,
         arguments: [wordBook]);
@@ -314,7 +321,7 @@ abstract class WordDao {
 
   @Query('''
     select count(*) as count from word_status
-    where (status=1 or (studyCycle>0 and status!=-1))
+    where (status=1 or (studyCycle>0 and status>=0))
     and updateTime > :dayStartTime
   ''')
   Future<int?> queryDailyPassWordCountWithTime(int dayStartTime);
@@ -327,7 +334,7 @@ abstract class WordDao {
     var count = await queryAdapter.query(
         '''select count(distinct word.word) as count from  word_status status
         left join  word word  on status.word = word.book || '_' || word.word
-         where word.book=CAST(?1 AS TEXT) and createTime > ${getDayStartTime()} and status.status!=-1 and status.status is not null
+         where word.book=CAST(?1 AS TEXT) and createTime > ${getDayStartTime()} and status.status>=0
         ''',
         mapper: (Map<String, Object?> row) => row['count'] as int?,
         arguments: [wordBook]);

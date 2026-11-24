@@ -27,13 +27,22 @@ void main() async {
   }
 
   final databaseFile = File(path);
-  final wasMissing = !databaseFile.existsSync();
-  if (wasMissing || await databaseFile.length() < 100000) {
+  final wasMissing =
+      !databaseFile.existsSync() || await databaseFile.length() == 0;
+  if (wasMissing) {
     await releaseAssetsToFile("assets/dict.db1", databaseFile);
   }
 
-  var appDatabase =
-      await $FloorAppDatabase.databaseBuilder("english15.db").build();
+  AppDatabase appDatabase;
+  try {
+    appDatabase =
+        await $FloorAppDatabase.databaseBuilder("english15.db").build();
+  } catch (_) {
+    await databaseFile.delete();
+    await releaseAssetsToFile("assets/dict.db1", databaseFile);
+    appDatabase =
+        await $FloorAppDatabase.databaseBuilder("english15.db").build();
+  }
   Get.put(appDatabase);
   final db = appDatabase.database;
 

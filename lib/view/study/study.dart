@@ -388,39 +388,37 @@ class StudyPage extends GetView<StudyController> {
           Align(
             alignment: Alignment.topRight,
             child: Obx(() {
-              if (controller.isManualMode.value && !controller.isRevealed.value)
+              if (controller.isManualMode.value &&
+                  !controller.isRevealed.value) {
                 return const SizedBox();
+              }
 
-              return Container(
-                  margin: const EdgeInsets.only(top: 20, right: 20),
-                  width: 36,
-                  height: 36,
-                  child: Ink(
-                    decoration: BoxDecoration(
-                      color: isDark ? const Color(0xFF1E293B) : Colors.white,
-                      borderRadius: BorderRadius.circular(100),
-                      boxShadow: [
-                        BoxShadow(
-                            blurStyle: BlurStyle.outer,
-                            blurRadius: 10,
-                            color: isDark
-                                ? Colors.red.withOpacity(0.4)
-                                : Colors.red.withOpacity(0.2)),
-                      ],
+              final enabled = controller.controlEnable.value &&
+                  controller.thinking.value == false;
+              return Padding(
+                padding: const EdgeInsets.only(top: 20, right: 20),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _CompactWordAction(
+                      icon: Icons.check_circle_outline_rounded,
+                      tooltip: "设为熟词（不再进入复习）",
+                      color: Colors.green,
+                      isDark: isDark,
+                      onTap:
+                          enabled ? controller.markCurrentWordFamiliar : null,
                     ),
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(100),
-                      onTap: controller.controlEnable.value &&
-                              controller.thinking.value == false
-                          ? () => controller.delete()
-                          : null,
-                      child: Container(
-                        alignment: Alignment.center,
-                        child: const Icon(Icons.delete_outline_rounded,
-                            color: Colors.red, size: 24),
-                      ),
+                    const SizedBox(width: 8),
+                    _CompactWordAction(
+                      icon: Icons.delete_outline_rounded,
+                      tooltip: "从本书彻底删除",
+                      color: Colors.red,
+                      isDark: isDark,
+                      onTap: enabled ? controller.delete : null,
                     ),
-                  ));
+                  ],
+                ),
+              );
             }),
           ),
 
@@ -661,7 +659,11 @@ class StudyPage extends GetView<StudyController> {
                       color: isDark ? Colors.white54 : Colors.black54,
                       height: 1.5)),
               const SizedBox(height: 40),
-              _buildRestartBtn("再学一轮", 'REVIEW_NEXT', isDark),
+              _buildRestartBtn(
+                controller.hasNextReviewBatch.value ? "复习接下来的词" : "再学一轮",
+                'REVIEW_NEXT',
+                isDark,
+              ),
               const SizedBox(height: 30),
               TextButton(
                   onPressed: () => Get.offAllNamed("/main"),
@@ -802,7 +804,11 @@ class StudyPage extends GetView<StudyController> {
             ),
           ),
           const SizedBox(height: 20),
-          _buildRestartBtn("再学一轮", 'REVIEW_NEXT', isDark),
+          _buildRestartBtn(
+            controller.hasNextReviewBatch.value ? "复习接下来的词" : "再学一轮",
+            'REVIEW_NEXT',
+            isDark,
+          ),
           const SizedBox(height: 10),
           TextButton(
             onPressed: () => Get.offAllNamed("/main"),
@@ -1662,6 +1668,48 @@ class StudyPage extends GetView<StudyController> {
   }
 }
 
+class _CompactWordAction extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final Color color;
+  final bool isDark;
+  final VoidCallback? onTap;
+
+  const _CompactWordAction({
+    required this.icon,
+    required this.tooltip,
+    required this.color,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: isDark ? const Color(0xFF1E293B) : Colors.white,
+        shape: const CircleBorder(),
+        elevation: 2,
+        shadowColor: color.withOpacity(0.35),
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: SizedBox(
+            width: 36,
+            height: 36,
+            child: Icon(
+              icon,
+              color: onTap == null ? Colors.grey : color,
+              size: 23,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // --- PASS 按钮：短按 pass，长按弹出「设为熟词 / 顽固单词」 ---
 class _PassButton extends StatefulWidget {
   final bool isDark;
@@ -1773,7 +1821,7 @@ class _PassButtonState extends State<_PassButton>
   void _executeAction(int index) {
     final controller = Get.find<StudyController>();
     if (index == 0) {
-      controller.delete();
+      controller.markCurrentWordFamiliar();
     } else {
       controller.addToDifficult();
     }
@@ -2601,78 +2649,79 @@ class WordListView extends GetView<WordListController> {
                           ))),
                           //删除恢复按钮
                           Container(
-                            padding: EdgeInsets.symmetric(
-                              vertical: 10,
-                            ),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
                             child: Obx(() {
-                              return Row(
+                              final isFamiliar = isDelete.value == true;
+                              return Column(
                                 children: [
-                                  Expanded(
-                                    child: TextButton(
-                                      onPressed: isDelete.value == true
-                                          ? () async {
-                                              //重新学习：从删除数据库恢复单词
-                                              await controller
-                                                  .restoreWord(word);
-                                              isDelete.value =
-                                                  word.isDelete ?? false;
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: TextButton.icon(
+                                          onPressed: isFamiliar
+                                              ? () async {
+                                                  await controller
+                                                      .restoreWord(word);
+                                                  isDelete.value =
+                                                      word.isDelete ?? false;
+                                                }
+                                              : () async {
+                                                  await controller
+                                                      .markFamiliar(word);
+                                                  isDelete.value =
+                                                      word.isDelete ?? false;
+                                                },
+                                          icon: Icon(
+                                            isFamiliar
+                                                ? Icons
+                                                    .settings_backup_restore_outlined
+                                                : Icons.check_circle_outline,
+                                          ),
+                                          label: Text(
+                                            isFamiliar ? "恢复学习" : "设为熟词",
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: TextButton.icon(
+                                          onPressed: () async {
+                                            final confirmed =
+                                                await Get.defaultDialog<bool>(
+                                              title: "从本书彻底删除",
+                                              middleText:
+                                                  "《${word.word ?? ''}》会从词书源中移除，不再出现在普通词、熟词或顽固词库。",
+                                              textConfirm: "彻底删除",
+                                              textCancel: "取消",
+                                              confirmTextColor: Colors.white,
+                                              buttonColor: Colors.red,
+                                              onConfirm: () =>
+                                                  Get.back(result: true),
+                                              onCancel: () =>
+                                                  Get.back(result: false),
+                                            );
+                                            if (confirmed != true) return;
+                                            final deleted = await controller
+                                                .deleteWordPermanently(word);
+                                            if (!deleted) {
+                                              Get.snackbar(
+                                                  "删除失败", "未找到该单词的词源记录");
+                                              return;
                                             }
-                                          : null,
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: const [
-                                          Icon(Icons
-                                              .settings_backup_restore_outlined),
-                                          Text("重新学习"),
-                                        ],
+                                            if (Get.isBottomSheetOpen == true) {
+                                              Get.back();
+                                            }
+                                            wordStatusUpdateCallback?.call();
+                                            Get.snackbar("删除成功", "该词已从本书移除");
+                                          },
+                                          icon: const Icon(
+                                              Icons.delete_forever_outlined),
+                                          label: const Text("从词书删除"),
+                                          style: TextButton.styleFrom(
+                                            foregroundColor: Colors.red,
+                                          ),
+                                        ),
                                       ),
-                                      style: ButtonStyle(
-                                        foregroundColor:
-                                            MaterialStateProperty.all(
-                                                isDelete.value == false ||
-                                                        isDelete.value == null
-                                                    ? Colors.grey
-                                                    : Colors.black),
-                                        padding: MaterialStateProperty.all(
-                                            const EdgeInsets.symmetric(
-                                          vertical: 10,
-                                          horizontal: 20,
-                                        )),
-                                      ),
-                                    ),
-                                  ),
-                                  Expanded(
-                                    child: TextButton(
-                                      onPressed: isDelete.value == true
-                                          ? null
-                                          : () async {
-                                              //删除单词：设为熟词
-                                              await controller.deleteWord(word);
-                                              isDelete.value =
-                                                  word.isDelete ?? false;
-                                            },
-                                      child: Row(
-                                        mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                        children: const [
-                                          Icon(Icons.delete_outlined),
-                                          Text("设为熟词"),
-                                        ],
-                                      ),
-                                      style: ButtonStyle(
-                                        foregroundColor:
-                                            MaterialStateProperty.all(
-                                                isDelete.value == true
-                                                    ? Colors.grey
-                                                    : Colors.red.shade400),
-                                        padding: MaterialStateProperty.all(
-                                            const EdgeInsets.symmetric(
-                                          vertical: 10,
-                                          horizontal: 20,
-                                        )),
-                                      ),
-                                    ),
+                                    ],
                                   ),
                                 ],
                               );

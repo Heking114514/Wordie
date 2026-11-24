@@ -10,6 +10,177 @@ import 'package:get_storage/get_storage.dart';
 import '../../entity/word/po/word.dart';
 import '../../util/time.dart';
 
+class ReviewWordSnapshot {
+  final String id;
+  final int updateTime;
+  final int lastReviewTime;
+
+  const ReviewWordSnapshot({
+    required this.id,
+    required this.updateTime,
+    required this.lastReviewTime,
+  });
+}
+
+class ReviewQueuePlan {
+  final List<String> activeIds;
+  final List<String> nextIds;
+
+  const ReviewQueuePlan({
+    required this.activeIds,
+    required this.nextIds,
+  });
+}
+
+class ReviewQueueSnapshot {
+  final List<WordVO> words;
+  final int position;
+  final int activeUniqueCount;
+  final int nextUniqueCount;
+
+  const ReviewQueueSnapshot({
+    required this.words,
+    required this.position,
+    required this.activeUniqueCount,
+    required this.nextUniqueCount,
+  });
+
+  bool get isCompleted => position >= words.length;
+}
+
+bool isReviewStateForDay(String? storedDay, String currentDay) {
+  return storedDay == currentDay;
+}
+
+List<String> uniqueReviewIds(Iterable<String> ids) {
+  final seen = <String>{};
+  final result = <String>[];
+  for (final rawId in ids) {
+    final id = rawId.trim();
+    if (id.isNotEmpty && seen.add(id)) result.add(id);
+  }
+  return result;
+}
+
+int _compareReviewSnapshots(ReviewWordSnapshot a, ReviewWordSnapshot b) {
+  final lastReviewOrder = a.lastReviewTime.compareTo(b.lastReviewTime);
+  if (lastReviewOrder != 0) return lastReviewOrder;
+  final updateOrder = a.updateTime.compareTo(b.updateTime);
+  if (updateOrder != 0) return updateOrder;
+  return a.id.compareTo(b.id);
+}
+
+List<String> freezeReviewIdsForOpening({
+  required Iterable<ReviewWordSnapshot> candidates,
+  required int dayStart,
+  required int openedAt,
+  required int maxCount,
+  Iterable<String> excludedIds = const <String>[],
+}) {
+  if (maxCount <= 0) return <String>[];
+
+  final excluded = excludedIds.map((id) => id.trim()).toSet();
+  final eligibleById = <String, ReviewWordSnapshot>{};
+  for (final candidate in candidates) {
+    final id = candidate.id.trim();
+    if (id.isEmpty ||
+        candidate.updateTime < dayStart ||
+        candidate.updateTime > openedAt ||
+        excluded.contains(id)) {
+      continue;
+    }
+    final existing = eligibleById[id];
+    if (existing == null || candidate.updateTime > existing.updateTime) {
+      eligibleById[id] = ReviewWordSnapshot(
+        id: id,
+        updateTime: candidate.updateTime,
+        lastReviewTime: candidate.lastReviewTime,
+      );
+    }
+  }
+
+  final eligible = eligibleById.values.toList()..sort(_compareReviewSnapshots);
+  return eligible.take(maxCount).map((item) => item.id).toList();
+}
+
+List<String> buildPendingReviewIds({
+  required Iterable<ReviewWordSnapshot> candidates,
+  required int dayStart,
+  required Iterable<String> activeIds,
+  Iterable<String> excludedIds = const <String>[],
+}) {
+  final excluded = <String>{
+    ...activeIds.map((id) => id.trim()),
+    ...excludedIds.map((id) => id.trim()),
+  };
+  final eligibleById = <String, ReviewWordSnapshot>{};
+  for (final candidate in candidates) {
+    final id = candidate.id.trim();
+    if (id.isEmpty ||
+        candidate.updateTime < dayStart ||
+        excluded.contains(id)) {
+      continue;
+    }
+    final existing = eligibleById[id];
+    if (existing == null || candidate.updateTime > existing.updateTime) {
+      eligibleById[id] = ReviewWordSnapshot(
+        id: id,
+        updateTime: candidate.updateTime,
+        lastReviewTime: candidate.lastReviewTime,
+      );
+    }
+  }
+
+  final eligible = eligibleById.values.toList()
+    ..sort((a, b) {
+      final updateOrder = a.updateTime.compareTo(b.updateTime);
+      if (updateOrder != 0) return updateOrder;
+      return a.id.compareTo(b.id);
+    });
+  return eligible.map((item) => item.id).toList();
+}
+
+List<String> limitReviewIds(Iterable<String> ids, int maxCount) {
+  final uniqueIds = uniqueReviewIds(ids);
+  if (maxCount <= 0 || uniqueIds.length <= maxCount) return uniqueIds;
+  return uniqueIds.take(maxCount).toList();
+}
+
+List<String> expandReviewQueue(Iterable<String> ids, int cycles) {
+  final uniqueIds = uniqueReviewIds(ids);
+  if (uniqueIds.isEmpty) return <String>[];
+  final safeCycles = cycles < 1 ? 1 : cycles;
+  final expanded = <String>[];
+  for (var cycle = 0; cycle < safeCycles; cycle++) {
+    expanded.addAll(uniqueIds);
+  }
+  return expanded;
+}
+
+ReviewQueuePlan promoteReviewQueuePlan({
+  required Iterable<String> currentActiveIds,
+  required Iterable<String> nextIds,
+  required Iterable<ReviewWordSnapshot> candidates,
+  required int dayStart,
+  Iterable<String> completedIds = const <String>[],
+}) {
+  final newActiveIds = uniqueReviewIds(nextIds);
+  final excluded = <String>[
+    ...completedIds,
+    ...currentActiveIds,
+  ];
+  final pendingIds = buildPendingReviewIds(
+    candidates: candidates,
+    dayStart: dayStart,
+    activeIds: newActiveIds,
+    excludedIds: excluded,
+  );
+  return ReviewQueuePlan(
+    activeIds: newActiveIds,
+    nextIds: pendingIds,
+  );
+}
+
 class StudyService {
   AppService appService = Get.find();
   WordDao wordDao = Get.find();
@@ -18,6 +189,17 @@ class StudyService {
   int _reviewIndex = 0;
 
   String get _reviewStatsKey => 'review_word_stats_${appService.bookId}';
+  String get _reviewDateKey => 'review_date_${appService.bookId}';
+  String get _reviewActiveKey => 'review_batch_${appService.bookId}';
+  String get _reviewActiveSelectedKey =>
+      'review_batch_selected_${appService.bookId}';
+  String get _reviewActivePositionKey =>
+      'review_batch_pos_${appService.bookId}';
+  String get _reviewBatchKeyKey => 'review_batch_key_${appService.bookId}';
+  String get _reviewRoundDoneKey => 'review_round_done_${appService.bookId}';
+  String get _reviewNextKey => 'review_next_batch_${appService.bookId}';
+  String get _reviewOpenedAtKey => 'review_opened_at_${appService.bookId}';
+  String get _aiArticleCacheKey => 'ai_article_cache_${appService.bookId}';
 
   String _wordIdFromStatusKey(String statusKey) {
     final prefix = '${appService.bookId}_';
@@ -35,6 +217,7 @@ class StudyService {
   Future<List<String>> _readNormalizedReviewIds(
     String key, {
     bool deduplicate = true,
+    bool persistNormalization = true,
   }) async {
     await appService.readWords();
     final storage = GetStorage();
@@ -47,10 +230,11 @@ class StudyService {
         .toList();
     final normalized = deduplicate ? migrated.toSet().toList() : migrated;
     final original = raw.map((value) => value.toString()).toList();
-    if (original.length != normalized.length ||
-        original.asMap().entries.any(
-              (entry) => entry.value != normalized[entry.key],
-            )) {
+    if (persistNormalization &&
+        (original.length != normalized.length ||
+            original.asMap().entries.any(
+                  (entry) => entry.value != normalized[entry.key],
+                ))) {
       await storage.write(key, normalized);
     }
     return normalized;
@@ -92,23 +276,24 @@ class StudyService {
 
   Future<void> ensureTodayReviewState() async {
     final storage = GetStorage();
-    final dateKey = 'review_date_${appService.bookId}';
     final today = getDayKey();
-    if (storage.read(dateKey) == today) return;
+    if (isReviewStateForDay(storage.read(_reviewDateKey), today)) return;
 
     for (final key in <String>[
-      'review_round_done_${appService.bookId}',
-      'review_batch_${appService.bookId}',
-      'review_batch_key_${appService.bookId}',
-      'review_batch_pos_${appService.bookId}',
-      'review_batch_selected_${appService.bookId}',
+      _reviewRoundDoneKey,
+      _reviewActiveKey,
+      _reviewBatchKeyKey,
+      _reviewActivePositionKey,
+      _reviewActiveSelectedKey,
+      _reviewNextKey,
+      _reviewOpenedAtKey,
       'review_queue_${appService.bookId}',
       'review_passed_${appService.bookId}',
-      'ai_article_cache_${appService.bookId}',
+      _aiArticleCacheKey,
     ]) {
       await storage.remove(key);
     }
-    await storage.write(dateKey, today);
+    await storage.write(_reviewDateKey, today);
   }
 
   Future<List<WordStatusPO>> fetchTodayReviewStatuses() async {
@@ -126,6 +311,235 @@ class StudyService {
     return reviewStatuses;
   }
 
+  Future<List<ReviewWordSnapshot>> _reviewCandidates() async {
+    final statuses = await _bookReviewStatuses();
+    final stats = _readReviewStats();
+    return statuses
+        .map((status) {
+          final id = _wordIdFromStatusKey(status.word ?? '');
+          return ReviewWordSnapshot(
+            id: id,
+            updateTime: status.updateTime ?? 0,
+            lastReviewTime: _lastReviewTime(stats, id),
+          );
+        })
+        .where((candidate) => candidate.id.isNotEmpty)
+        .toList();
+  }
+
+  int? _readStoredInt(String key) {
+    final value = GetStorage().read(key);
+    if (value is int) return value;
+    return int.tryParse('${value ?? ''}');
+  }
+
+  String _newReviewBatchKey() {
+    return '${DateTime.now().microsecondsSinceEpoch}_'
+        '${Random().nextInt(1 << 32)}';
+  }
+
+  Future<void> _writeActiveReviewQueue({
+    required List<String> activeIds,
+    required List<String> selectedIds,
+    required int position,
+    required bool rotateBatchKey,
+  }) async {
+    final storage = GetStorage();
+    final uniqueSelectedIds = uniqueReviewIds(selectedIds);
+    await storage.write(_reviewActiveKey, activeIds);
+    await storage.write(_reviewActiveSelectedKey, uniqueSelectedIds);
+    await storage.write(_reviewActivePositionKey, position);
+    if (rotateBatchKey) {
+      await storage.write(_reviewBatchKeyKey, _newReviewBatchKey());
+      await storage.remove(_aiArticleCacheKey);
+    }
+  }
+
+  Future<int> refreshNextReviewQueue() async {
+    await ensureTodayReviewState();
+    final activeIds = await _readNormalizedReviewIds(
+      _reviewActiveKey,
+      deduplicate: false,
+      persistNormalization: false,
+    );
+    final selectedIds =
+        await _readNormalizedReviewIds(_reviewActiveSelectedKey);
+    final roundDoneIds = await _readNormalizedReviewIds(_reviewRoundDoneKey);
+    final candidates = await _reviewCandidates();
+    final pendingIds = buildPendingReviewIds(
+      candidates: candidates,
+      dayStart: getDayStartTime(),
+      activeIds: <String>[...activeIds, ...selectedIds],
+      excludedIds: roundDoneIds,
+    );
+    await GetStorage().write(_reviewNextKey, pendingIds);
+    return pendingIds.length;
+  }
+
+  Future<ReviewQueuePlan?> _promotePendingReviewQueue({
+    required List<String> activeIds,
+    required int cycles,
+    required int targetCount,
+    required int dayStart,
+  }) async {
+    final storage = GetStorage();
+    var nextIds = await _readNormalizedReviewIds(_reviewNextKey);
+    if (nextIds.isEmpty) {
+      await refreshNextReviewQueue();
+      nextIds = await _readNormalizedReviewIds(_reviewNextKey);
+    }
+    if (nextIds.isEmpty) return null;
+    nextIds = limitReviewIds(nextIds, targetCount);
+
+    final roundDoneIds = await _readNormalizedReviewIds(_reviewRoundDoneKey);
+    final completedIds = uniqueReviewIds(<String>[
+      ...roundDoneIds,
+      ...activeIds,
+    ]);
+    final candidates = await _reviewCandidates();
+    final plan = promoteReviewQueuePlan(
+      currentActiveIds: activeIds,
+      nextIds: nextIds,
+      candidates: candidates,
+      dayStart: dayStart,
+      completedIds: completedIds,
+    );
+    if (plan.activeIds.isEmpty) return null;
+
+    await storage.write(_reviewRoundDoneKey, completedIds);
+    await _writeActiveReviewQueue(
+      activeIds: expandReviewQueue(plan.activeIds, cycles),
+      selectedIds: plan.activeIds,
+      position: 0,
+      rotateBatchKey: true,
+    );
+    await storage.write(_reviewNextKey, plan.nextIds);
+    return plan;
+  }
+
+  // The active queue is written only here and when the pending queue is
+  // promoted. Reopening the review screen refreshes only the pending queue.
+  Future<ReviewQueueSnapshot> loadOrFreezeActiveReviewQueue({
+    required int targetCount,
+    required int cycles,
+  }) async {
+    final openedAtTime = DateTime.now();
+    final openedAt = openedAtTime.millisecondsSinceEpoch;
+    final openedDayStart = getDayStartTime(openedAtTime);
+    await appService.readWords();
+    await ensureTodayReviewState();
+
+    final storage = GetStorage();
+    var activeIds = await _readNormalizedReviewIds(
+      _reviewActiveKey,
+      deduplicate: false,
+      persistNormalization: false,
+    );
+    var selectedIds = await _readNormalizedReviewIds(_reviewActiveSelectedKey);
+    final storedOpenedAt = _readStoredInt(_reviewOpenedAtKey);
+
+    if (storedOpenedAt == null) {
+      if (activeIds.isEmpty && selectedIds.isNotEmpty) {
+        activeIds = expandReviewQueue(selectedIds, cycles);
+        await _writeActiveReviewQueue(
+          activeIds: activeIds,
+          selectedIds: selectedIds,
+          position: 0,
+          rotateBatchKey: false,
+        );
+      } else if (activeIds.isEmpty && selectedIds.isEmpty) {
+        final candidates = await _reviewCandidates();
+        final roundDoneIds =
+            await _readNormalizedReviewIds(_reviewRoundDoneKey);
+        selectedIds = freezeReviewIdsForOpening(
+          candidates: candidates,
+          dayStart: openedDayStart,
+          openedAt: openedAt,
+          maxCount: targetCount,
+          excludedIds: roundDoneIds,
+        );
+        activeIds = expandReviewQueue(selectedIds, cycles);
+        await _writeActiveReviewQueue(
+          activeIds: activeIds,
+          selectedIds: selectedIds,
+          position: 0,
+          rotateBatchKey: true,
+        );
+      } else {
+        selectedIds = uniqueReviewIds(activeIds);
+        await storage.write(_reviewActiveSelectedKey, selectedIds);
+      }
+      await storage.write(_reviewOpenedAtKey, openedAt);
+    } else if (activeIds.isEmpty && selectedIds.isNotEmpty) {
+      activeIds = expandReviewQueue(selectedIds, cycles);
+      await _writeActiveReviewQueue(
+        activeIds: activeIds,
+        selectedIds: selectedIds,
+        position: 0,
+        rotateBatchKey: false,
+      );
+    }
+
+    if (activeIds.isNotEmpty && selectedIds.isEmpty) {
+      selectedIds = uniqueReviewIds(activeIds);
+      await storage.write(_reviewActiveSelectedKey, selectedIds);
+    }
+    if (activeIds.isNotEmpty &&
+        '${storage.read(_reviewBatchKeyKey) ?? ''}'.isEmpty) {
+      await storage.write(_reviewBatchKeyKey, _newReviewBatchKey());
+      await storage.remove(_aiArticleCacheKey);
+    }
+
+    var nextUniqueCount = await refreshNextReviewQueue();
+    if (activeIds.isEmpty && nextUniqueCount > 0) {
+      final promoted = await _promotePendingReviewQueue(
+        activeIds: activeIds,
+        cycles: cycles,
+        targetCount: targetCount,
+        dayStart: getDayStartTime(),
+      );
+      if (promoted != null) {
+        activeIds = expandReviewQueue(promoted.activeIds, cycles);
+        selectedIds = promoted.activeIds;
+        nextUniqueCount = promoted.nextIds.length;
+      }
+    }
+
+    final words = await _reviewWordsForIds(activeIds);
+    final savedPosition = _readStoredInt(_reviewActivePositionKey) ?? 0;
+    final safePosition = savedPosition.clamp(0, words.length).toInt();
+    return ReviewQueueSnapshot(
+      words: words,
+      position: safePosition,
+      activeUniqueCount: uniqueReviewIds(activeIds).length,
+      nextUniqueCount: nextUniqueCount,
+    );
+  }
+
+  Future<bool> promoteNextReviewQueue({
+    required int cycles,
+    required int targetCount,
+  }) async {
+    await appService.readWords();
+    await ensureTodayReviewState();
+
+    final activeIds = await _readNormalizedReviewIds(
+      _reviewActiveKey,
+      deduplicate: false,
+      persistNormalization: false,
+    );
+    final position = _readStoredInt(_reviewActivePositionKey) ?? 0;
+    if (activeIds.isNotEmpty && position < activeIds.length) return false;
+
+    final promoted = await _promotePendingReviewQueue(
+      activeIds: activeIds,
+      cycles: cycles,
+      targetCount: targetCount,
+      dayStart: getDayStartTime(),
+    );
+    return promoted != null;
+  }
+
   Future<int> todayLearnedCount() async {
     await ensureTodayReviewState();
     return (await _bookReviewStatuses()).length;
@@ -137,29 +551,16 @@ class StudyService {
     String mode = Get.parameters['mode'] ?? 'new';
 
     if (mode == 'review') {
-      await ensureTodayReviewState();
-      final savedIds = await _readNormalizedReviewIds(
-        'review_batch_${appService.bookId}',
-        deduplicate: false,
+      final target = GetStorage().read('review_target_${appService.bookId}') ??
+          appService.reviewDailyCount;
+      final cycles =
+          GetStorage().read('review_cycles_${appService.bookId}') ?? 1;
+      final snapshot = await loadOrFreezeActiveReviewQueue(
+        targetCount: int.tryParse('$target') ?? appService.reviewDailyCount,
+        cycles: int.tryParse('$cycles') ?? 1,
       );
-      final reviewableIds = (await _bookReviewStatuses())
-          .map((status) => _wordIdFromStatusKey(status.word ?? ''))
-          .where((id) => id.isNotEmpty)
-          .toSet();
-      final validSavedIds =
-          savedIds.where((id) => reviewableIds.contains(id)).toList();
-      if (validSavedIds.length != savedIds.length) {
-        await GetStorage().write(
-          'review_batch_${appService.bookId}',
-          validSavedIds,
-        );
-      }
-      _reviewBatch = validSavedIds.isEmpty
-          ? await createReviewBatch(appService.reviewDailyCount, 1)
-          : await _reviewWordsForIds(validSavedIds);
-
-      _reviewIndex = 0;
-      var batch = _reviewBatch.take(studyQueueMaxCount).toList();
+      _reviewBatch = snapshot.words;
+      final batch = _reviewBatch.take(studyQueueMaxCount).toList();
       _reviewIndex = batch.length;
       return batch;
     } else {
@@ -463,54 +864,11 @@ class StudyService {
   }
 
   Future<List<WordVO>> createReviewBatch(int targetCount, int cycles) async {
-    await appService.readWords();
-    await ensureTodayReviewState();
-    final roundDone = await _readNormalizedReviewIds(
-      'review_round_done_${appService.bookId}',
+    final snapshot = await loadOrFreezeActiveReviewQueue(
+      targetCount: targetCount,
+      cycles: cycles,
     );
-
-    final statuses = await _bookReviewStatuses();
-    final available = statuses.where((status) {
-      final wordId = _wordIdFromStatusKey(status.word ?? '');
-      return wordId.isNotEmpty && !roundDone.contains(wordId);
-    }).toList();
-
-    if (available.isEmpty) return [];
-
-    final reviewStats = _readReviewStats();
-    available.shuffle();
-    available.sort((a, b) {
-      final aId = _wordIdFromStatusKey(a.word ?? '');
-      final bId = _wordIdFromStatusKey(b.word ?? '');
-      return _lastReviewTime(reviewStats, aId)
-          .compareTo(_lastReviewTime(reviewStats, bId));
-    });
-    int N = targetCount < available.length ? targetCount : available.length;
-    var selected = available.take(N).toList();
-
-    List<WordVO> batch = [];
-    for (int c = 0; c < cycles; c++) {
-      selected.shuffle();
-      for (var s in selected) {
-        final wordId = _wordIdFromStatusKey(s.word ?? '');
-        var po =
-            WordPO(id: 0, word: wordId, book: appService.bookId.toString());
-        var vo = toWord(po);
-        if (vo != null) batch.add(vo);
-      }
-    }
-
-    var storage = GetStorage();
-    await storage.write('review_batch_${appService.bookId}',
-        batch.map((e) => e.wordId).toList());
-    await storage.write(
-      'review_batch_key_${appService.bookId}',
-      '${DateTime.now().microsecondsSinceEpoch}_${Random().nextInt(1 << 32)}',
-    );
-    await storage.write('review_batch_pos_${appService.bookId}', 0);
-    await storage.write('review_batch_selected_${appService.bookId}',
-        selected.map((e) => _wordIdFromStatusKey(e.word ?? '')).toList());
-    return batch;
+    return snapshot.words;
   }
 
   Future<Map<String, WordStatusPO?>> fetchBookWordStatusMap() async {
@@ -582,34 +940,45 @@ class StudyService {
 
   Future<void> removeReviewWordState(int bookId, String wordId) async {
     await appService.readWords();
+    final normalizedWordId = _normalizeWordId(wordId);
     final storage = GetStorage();
     final batchKey = 'review_batch_$bookId';
     final rawBatch = storage.read(batchKey);
+    var activeChanged = false;
     if (rawBatch is List) {
       final batch = rawBatch.map((value) => value.toString()).toList();
       final oldPos =
           int.tryParse('${storage.read('review_batch_pos_$bookId') ?? 0}') ?? 0;
-      final safePos = oldPos.clamp(0, batch.length);
+      final safePos = oldPos.clamp(0, batch.length).toInt();
       final removedBefore = batch
           .take(safePos)
-          .where((value) => _normalizeWordId(value) == wordId)
+          .where((value) => _normalizeWordId(value) == normalizedWordId)
           .length;
-      batch.removeWhere((value) => _normalizeWordId(value) == wordId);
-      await storage.write(batchKey, batch);
-      await storage.write(
-        'review_batch_pos_$bookId',
-        (oldPos - removedBefore).clamp(0, batch.length),
+      final oldLength = batch.length;
+      batch.removeWhere(
+        (value) => _normalizeWordId(value) == normalizedWordId,
       );
+      activeChanged = batch.length != oldLength;
+      if (activeChanged) {
+        await storage.write(batchKey, batch);
+        await storage.write(
+          'review_batch_pos_$bookId',
+          (oldPos - removedBefore).clamp(0, batch.length).toInt(),
+        );
+      }
     }
 
     for (final key in <String>[
       'review_batch_selected_$bookId',
       'review_round_done_$bookId',
+      'review_next_batch_$bookId',
     ]) {
       final raw = storage.read(key);
       if (raw is List) {
         final ids = raw.map((value) => value.toString()).toList()
-          ..removeWhere((value) => _normalizeWordId(value) == wordId);
+          ..removeWhere(
+            (value) => _normalizeWordId(value) == normalizedWordId,
+          );
         await storage.write(key, ids);
       }
     }
@@ -618,10 +987,13 @@ class StudyService {
     if (statsRaw is Map) {
       final stats = Map<String, dynamic>.from(statsRaw);
       stats.remove(wordId);
+      stats.remove(normalizedWordId);
       await storage.write('review_word_stats_$bookId', stats);
     }
-    await storage.remove('review_batch_key_$bookId');
-    await storage.remove('ai_article_cache_$bookId');
+    if (activeChanged) {
+      await storage.remove('review_batch_key_$bookId');
+      await storage.remove('ai_article_cache_$bookId');
+    }
   }
 
   Future<void> markFamiliar(String wordId) async {
