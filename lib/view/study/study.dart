@@ -119,8 +119,13 @@ class StudyPage extends GetView<StudyController> {
               }
               final isReview = (Get.parameters['mode'] ?? 'new') == 'review';
               return PopupMenuButton<String>(
-                tooltip: "更多操作",
-                icon: const Icon(Icons.more_horiz_rounded),
+                tooltip: "单词跳转",
+                icon: Icon(
+                  Icons.more_horiz_rounded,
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? Colors.white
+                      : const Color(0xFF1E293B),
+                ),
                 position: PopupMenuPosition.under,
                 offset: const Offset(-8, 6),
                 color: Colors.transparent,
