@@ -902,6 +902,37 @@ class StudyService {
     ));
   }
 
+  Future<int> markWordsLearned(Iterable<String> wordIds) async {
+    var changed = 0;
+    for (final wordId in wordIds.toSet()) {
+      if (wordId.isEmpty) continue;
+      final wordKey = '${appService.bookId}_$wordId';
+      final existing = await wordDao.queryWordStatus(wordKey);
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (existing == null) {
+        await wordDao.createWordStatus(WordStatusPO(
+          word: wordKey,
+          status: 1,
+          studyCycle: 1,
+          nextReviewTime: 0,
+          createTime: now,
+          updateTime: now,
+        ));
+        changed++;
+        continue;
+      }
+      if (existing.status == -1) continue;
+      if (existing.status == 1 && (existing.studyCycle ?? 0) > 0) continue;
+      existing.status = 1;
+      existing.studyCycle = max(1, existing.studyCycle ?? 0);
+      existing.nextReviewTime = 0;
+      existing.updateTime = now;
+      await wordDao.updateStatus(existing);
+      changed++;
+    }
+    return changed;
+  }
+
   Future<void> pass(String word) async {
     String wordKey = "${appService.bookId}_$word";
     var status = await wordDao.queryWordStatus(wordKey);

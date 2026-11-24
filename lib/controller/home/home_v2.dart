@@ -2,6 +2,7 @@ import 'dart:math';
 import 'package:english/dao/word/word.dart';
 import 'package:english/entity/word/vo/word.dart';
 import 'package:english/service/app/app.dart';
+import 'package:english/service/study/study.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
@@ -24,6 +25,7 @@ class HomeControllerV2 extends GetxController {
   var dailyWord = Rx<WordVO?>(null);
 
   AppService appService = Get.find();
+  StudyService studyService = StudyService();
   var wordDao = Get.find<WordDao>();
 
   var tempReviewCount = 20.obs;
@@ -329,6 +331,7 @@ class HomeControllerV2 extends GetxController {
       return;
     }
 
+    await studyService.ensureTodayReviewState();
     var book = appService.wordService.bookMap[appService.bookName];
     var statuses = await wordDao.queryWordStatusByBook(appService.bookId);
 

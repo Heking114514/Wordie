@@ -112,6 +112,41 @@ class StudyPage extends GetView<StudyController> {
           centerTitle: true,
           elevation: 0,
           backgroundColor: Colors.transparent,
+          actions: [
+            Obx(() {
+              if (controller.isDifficultMode.value) {
+                return const SizedBox.shrink();
+              }
+              final isReview = (Get.parameters['mode'] ?? 'new') == 'review';
+              return PopupMenuButton<String>(
+                tooltip: "更多操作",
+                icon: const Icon(Icons.more_horiz_rounded),
+                onSelected: (value) => _openWordJumpSearch(
+                  context,
+                  markPreviousLearned: value == 'learn',
+                ),
+                itemBuilder: (context) => [
+                  const PopupMenuItem<String>(
+                    value: 'jump',
+                    child: ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: Icon(Icons.search_rounded),
+                      title: Text("仅搜索跳转单词"),
+                    ),
+                  ),
+                  if (!isReview)
+                    const PopupMenuItem<String>(
+                      value: 'learn',
+                      child: ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.playlist_add_check_circle_rounded),
+                        title: Text("搜索跳转并将前边的单词置为已学"),
+                      ),
+                    ),
+                ],
+              );
+            }),
+          ],
         ),
         body: SafeArea(
           child: Obx(() {
@@ -296,6 +331,24 @@ class StudyPage extends GetView<StudyController> {
           ),
         ),
       ),
+    );
+  }
+
+  Future<void> _openWordJumpSearch(
+    BuildContext context, {
+    required bool markPreviousLearned,
+  }) async {
+    final target = await Get.dialog<WordVO>(
+      _WordJumpDialog(
+        controller: controller,
+        markPreviousLearned: markPreviousLearned,
+      ),
+      barrierDismissible: false,
+    );
+    if (target == null) return;
+    await controller.jumpToSearchResult(
+      target,
+      markPreviousLearned: markPreviousLearned,
     );
   }
 
@@ -1665,6 +1718,119 @@ class StudyPage extends GetView<StudyController> {
 
   Widget buildWordListView(BuildContext context) {
     return WordListView();
+  }
+}
+
+class _WordJumpDialog extends StatefulWidget {
+  final StudyController controller;
+  final bool markPreviousLearned;
+
+  const _WordJumpDialog({
+    required this.controller,
+    required this.markPreviousLearned,
+  });
+
+  @override
+  State<_WordJumpDialog> createState() => _WordJumpDialogState();
+}
+
+class _WordJumpDialogState extends State<_WordJumpDialog> {
+  final TextEditingController _searchController = TextEditingController();
+  List<WordVO> _results = <WordVO>[];
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onQueryChanged(String value) {
+    setState(() {
+      _query = value.trim();
+      _results = widget.controller.searchLearningWords(value);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final title = widget.markPreviousLearned ? "搜索跳转并标记前序词" : "搜索并跳转单词";
+    return AlertDialog(
+      title: Text(title),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 430,
+        child: Column(
+          children: [
+            TextField(
+              controller: _searchController,
+              autofocus: true,
+              onChanged: _onQueryChanged,
+              decoration: InputDecoration(
+                hintText: "输入英文或中文释义",
+                prefixIcon: const Icon(Icons.search_rounded),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: _query.isEmpty
+                  ? Center(
+                      child: Text(
+                        "输入关键词搜索当前学习列表",
+                        style: TextStyle(
+                          color: isDark ? Colors.white54 : Colors.black45,
+                        ),
+                      ),
+                    )
+                  : _results.isEmpty
+                      ? Center(
+                          child: Text(
+                            "当前学习列表中没有匹配项",
+                            style: TextStyle(
+                              color: isDark ? Colors.white54 : Colors.black45,
+                            ),
+                          ),
+                        )
+                      : ListView.separated(
+                          itemCount: _results.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, index) {
+                            final word = _results[index];
+                            return ListTile(
+                              contentPadding:
+                                  const EdgeInsets.symmetric(horizontal: 4),
+                              title: Text(
+                                word.word ?? "",
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              subtitle: Text(
+                                word.means?.join("；") ?? "",
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing:
+                                  const Icon(Icons.keyboard_return_rounded),
+                              onTap: () => Navigator.of(context).pop(word),
+                            );
+                          },
+                        ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text("取消"),
+        ),
+      ],
+    );
   }
 }
 

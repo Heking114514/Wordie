@@ -4,6 +4,7 @@ import '../../controller/explore/explore.dart';
 import '../../dicts/reader.dart';
 import '../../entity/word/vo/word.dart';
 import '../../util/audio.dart';
+import '../../util/html_text.dart';
 import '../../widget/sentence.dart';
 
 class ExplorePage extends GetView<ExploreController> {
@@ -594,8 +595,8 @@ class _ExampleCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sentence = example.sentence ?? "";
-    final translation = example.sentenceCn ?? "";
+    final sentence = cleanHtmlText(example.sentence ?? "", preserveBold: true);
+    final translation = cleanHtmlText(example.sentenceCn ?? "");
 
     return Container(
       width: double.infinity,
@@ -663,7 +664,7 @@ List<String> _resolveMeans(Word detail, WordVO word) {
 
   return (rawMeans ?? "")
       .split(RegExp(r'\r?\n'))
-      .map((meaning) => meaning.trim())
+      .map((meaning) => cleanHtmlText(meaning).trim())
       .where((meaning) => meaning.isNotEmpty)
       .toList();
 }

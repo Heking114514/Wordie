@@ -927,6 +927,73 @@ class StudyController extends GetxController with WidgetsBindingObserver {
     return await jumpToWordAt(index);
   }
 
+  List<WordVO> searchLearningWords(String rawQuery) {
+    final query = rawQuery.trim().toLowerCase();
+    if (query.isEmpty) return <WordVO>[];
+    final seen = <String>{};
+    final results = <WordVO>[];
+    for (final item in playingWords) {
+      final spelling = (item.word ?? '').trim();
+      final identity = (item.wordId ?? spelling).toLowerCase();
+      if (identity.isEmpty || !seen.add(identity)) continue;
+      final meaning = (item.means ?? const <dynamic>[]).join(' ').toLowerCase();
+      if (!spelling.toLowerCase().contains(query) && !meaning.contains(query)) {
+        continue;
+      }
+      results.add(item);
+      if (results.length >= 50) break;
+    }
+    results.sort((a, b) {
+      final aWord = (a.word ?? '').toLowerCase();
+      final bWord = (b.word ?? '').toLowerCase();
+      final aExact = aWord == query;
+      final bExact = bWord == query;
+      if (aExact != bExact) return aExact ? -1 : 1;
+      final aStarts = aWord.startsWith(query);
+      final bStarts = bWord.startsWith(query);
+      if (aStarts != bStarts) return aStarts ? -1 : 1;
+      return aWord.compareTo(bWord);
+    });
+    return results;
+  }
+
+  Future<bool> jumpToSearchResult(
+    WordVO target, {
+    bool markPreviousLearned = false,
+  }) async {
+    final wordId = target.wordId;
+    final index = playingWords.indexWhere((item) =>
+        (wordId != null && item.wordId == wordId) ||
+        (item.word ?? '').toLowerCase() == (target.word ?? '').toLowerCase());
+    if (index < 0) {
+      Get.snackbar("提示", "该单词不在当前学习列表中");
+      return false;
+    }
+
+    if (markPreviousLearned) {
+      final previousIds = <String>{};
+      for (final item in playingWords.take(index)) {
+        final id = item.wordId;
+        if (id == null || id.isEmpty) continue;
+        final status = bookWordStatusMap[id];
+        if (status?.status == -1 || _isLearnedStatus(status)) continue;
+        previousIds.add(id);
+      }
+      final changed = await studyService.markWordsLearned(previousIds);
+      bookWordStatusMap = await studyService.fetchBookWordStatusMap();
+      await fetchCount();
+      if (changed > 0) {
+        Get.snackbar(
+          "已标记完成",
+          "目标前共有 $changed 个单词已置为已学",
+          duration: const Duration(seconds: 2),
+        );
+      }
+    }
+
+    return jumpToWordAt(index);
+  }
+
   void manualReveal() {
     if (isRevealed.value) return;
     isRevealed.value = true;
